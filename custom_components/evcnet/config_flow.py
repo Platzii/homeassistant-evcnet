@@ -64,6 +64,9 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle reconfigure flow."""
         errors: dict[str, str] = {}
+        
+        # Get the config entry from context
+        config_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
 
         if user_input is not None:
             # Validate the user input
@@ -74,7 +77,7 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     session = async_get_clientsession(self.hass)
                     
                     # Use existing password if not provided
-                    password = user_input[CONF_PASSWORD] or self.config_entry.data[CONF_PASSWORD]
+                    password = user_input[CONF_PASSWORD] or config_entry.data[CONF_PASSWORD]
                     
                     client = EvcNetApiClient(
                         user_input[CONF_BASE_URL],
@@ -87,9 +90,9 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if await client.authenticate():
                         # Update the config entry
                         self.hass.config_entries.async_update_entry(
-                            self.config_entry,
+                            config_entry,
                             data={
-                                **self.config_entry.data,
+                                **config_entry.data,
                                 CONF_BASE_URL: user_input[CONF_BASE_URL],
                                 CONF_USERNAME: user_input[CONF_USERNAME],
                                 CONF_PASSWORD: password,
@@ -105,7 +108,7 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "unknown"
 
         # Pre-fill with current values
-        current_data = self.config_entry.data
+        current_data = config_entry.data
         reconfigure_schema = vol.Schema(
             {
                 vol.Required(CONF_BASE_URL, default=current_data.get(CONF_BASE_URL)): str,
@@ -210,10 +213,6 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class EvcNetOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for EVC-net."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
