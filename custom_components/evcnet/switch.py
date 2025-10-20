@@ -65,20 +65,21 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         }
 
         # Store customer and card IDs for starting transactions
-        # Priority: 1) Config entry, 2) Auto-detected from API
-        self._customer_id = entry.data.get(CONF_CUSTOMER_ID)
-        self._card_id = entry.data.get(CONF_CARD_ID)
+        # Priority: 1) Options, 2) Config entry, 3) Auto-detected from API
+        self._customer_id = entry.options.get(CONF_CUSTOMER_ID) or entry.data.get(CONF_CUSTOMER_ID)
+        self._card_id = entry.options.get(CONF_CARD_ID) or entry.data.get(CONF_CARD_ID)
 
         # Try to extract from current data if not in config
         if not self._card_id or not self._customer_id:
             self._extract_ids_from_data()
 
         if self._card_id:
+            source = "options" if entry.options.get(CONF_CARD_ID) else ("config" if entry.data.get(CONF_CARD_ID) else "auto-detected")
             _LOGGER.info(
                 "Card ID configured for spot %s: %s (source: %s)",
                 spot_id,
                 self._card_id,
-                "config" if entry.data.get(CONF_CARD_ID) else "auto-detected"
+                source
             )
 
     def _extract_ids_from_data(self) -> None:

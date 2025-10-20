@@ -28,5 +28,30 @@
     "abort": {
       "already_configured": "This account is already configured"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EVC-net Options",
+        "description": "Update your RFID card ID and customer ID. These are used to start charging sessions remotely. Leave blank to use auto-detected values.",
+        "data": {
+          "card_id": "RFID Card ID",
+          "customer_id": "Customer ID (optional)"
+        }
+      }
+    }
+  },
+  "reconfigure": {
+    "step": {
+      "reconfigure": {
+        "title": "Reconfigure EVC-net",
+        "description": "Update your EVC-net connection credentials. Leave password blank to keep current password.",
+        "data": {
+          "base_url": "Base URL",
+          "username": "Email",
+          "password": "Password (leave blank to keep current)"
+        }
+      }
+    }
   }
 }
