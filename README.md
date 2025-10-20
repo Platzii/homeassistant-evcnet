@@ -68,6 +68,39 @@ For each charging station, the integration creates:
 ### Switch
 - **Charging**: Turn on to start charging, off to stop
 
+## Configuration Options
+
+After initial setup, you can modify configuration through the Home Assistant UI:
+
+### Quick Settings (Card ID & Customer ID)
+
+1. Go to **Settings** → **Devices & Services**
+2. Find your **EVC-net** integration
+3. Click the **Configure** button (⚙️)
+4. Update your settings:
+   - **RFID Card ID**: Your charging card ID
+   - **Customer ID**: Your customer ID (optional)
+
+### Change Connection Credentials (URL, Username, Password)
+
+To change your base URL, username, or password:
+
+1. Go to **Settings** → **Devices & Services**
+2. Find your **EVC-net** integration
+3. Click the **Configure** button (⚙️)
+4. Click **"Reconfigure"** at the bottom
+5. Update your credentials:
+   - **Base URL**: Your EVC-net endpoint
+   - **Email**: Your account email
+   - **Password**: Leave blank to keep current password
+
+### Configuration Priority
+
+The integration uses configuration in this order:
+1. **Options** (set via Configure button) - highest priority
+2. **Initial setup** (set during integration setup)
+3. **Auto-detection** (detected from API responses) - fallback
+
 ## Notes
 
 ⚠️ **Important**: To start charging, the integration needs `customer_id` and `card_id`. These should be automatically detected from your account. If starting charging fails, you may need to manually configure these IDs.

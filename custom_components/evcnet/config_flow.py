@@ -53,6 +53,76 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._user_input: dict[str, Any] = {}
 
+    @staticmethod
+    @config_entries.callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return EvcNetOptionsFlowHandler(config_entry)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle reconfigure flow."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            # Validate the user input
+            if not validate_url(user_input[CONF_BASE_URL]):
+                errors["base"] = "invalid_url"
+            else:
+                try:
+                    session = async_get_clientsession(self.hass)
+                    
+                    # Use existing password if not provided
+                    password = user_input[CONF_PASSWORD] or self.config_entry.data[CONF_PASSWORD]
+                    
+                    client = EvcNetApiClient(
+                        user_input[CONF_BASE_URL],
+                        user_input[CONF_USERNAME],
+                        password,
+                        session,
+                    )
+
+                    # Test authentication
+                    if await client.authenticate():
+                        # Update the config entry
+                        self.hass.config_entries.async_update_entry(
+                            self.config_entry,
+                            data={
+                                **self.config_entry.data,
+                                CONF_BASE_URL: user_input[CONF_BASE_URL],
+                                CONF_USERNAME: user_input[CONF_USERNAME],
+                                CONF_PASSWORD: password,
+                            }
+                        )
+                        return self.async_create_entry(title="", data={})
+                    else:
+                        errors["base"] = "invalid_auth"
+                except aiohttp.ClientError:
+                    errors["base"] = "cannot_connect"
+                except Exception:  # pylint: disable=broad-except
+                    _LOGGER.exception("Unexpected exception")
+                    errors["base"] = "unknown"
+
+        # Pre-fill with current values
+        current_data = self.config_entry.data
+        reconfigure_schema = vol.Schema(
+            {
+                vol.Required(CONF_BASE_URL, default=current_data.get(CONF_BASE_URL)): str,
+                vol.Required(CONF_USERNAME, default=current_data.get(CONF_USERNAME)): str,
+                vol.Optional(CONF_PASSWORD, default=""): str,  # Optional - leave blank to keep current
+            }
+        )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=reconfigure_schema,
+            errors=errors,
+            description_placeholders={
+                "info": "Update your EVC-net connection credentials. Leave password blank to keep current password."
+            },
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -133,6 +203,50 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "Optional: Provide your RFID card ID to enable starting charging sessions from Home Assistant. "
                     "You can find this by starting a charging session manually and checking the logs, "
                     "or leave blank and it will be auto-detected from your next charging session."
+                )
+            },
+        )
+
+
+class EvcNetOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for EVC-net."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            # Update the config entry with new options
+            return self.async_create_entry(title="", data=user_input)
+
+        # Create options schema with current values
+        options_schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_CARD_ID,
+                    default=self.config_entry.data.get(CONF_CARD_ID, ""),
+                    description={"suggested_value": ""}
+                ): str,
+                vol.Optional(
+                    CONF_CUSTOMER_ID,
+                    default=self.config_entry.data.get(CONF_CUSTOMER_ID, ""),
+                    description={"suggested_value": ""}
+                ): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=options_schema,
+            description_placeholders={
+                "info": (
+                    "Update your RFID card ID and customer ID. "
+                    "These are used to start charging sessions remotely. "
+                    "Leave blank to use auto-detected values."
                 )
             },
         )
