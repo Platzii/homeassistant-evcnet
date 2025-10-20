@@ -1,0 +1,292 @@
+"""Switch platform for EVC-net."""
+import asyncio
+import logging
+from typing import Any
+
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import CONF_CARD_ID, CONF_CUSTOMER_ID, DOMAIN, CHARGING_STATUS_CODES, CHARGING_KEYWORDS
+from .coordinator import EvcNetCoordinator
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up EVC-net switches."""
+    coordinator: EvcNetCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    entities = []
+    for spot_id in coordinator.data:
+        entities.append(EvcNetChargingSwitch(coordinator, spot_id, entry))
+
+    async_add_entities(entities)
+
+
+class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
+    """Representation of a EVC-net charging switch."""
+
+    _attr_icon = "mdi:ev-station"
+
+    def __init__(
+        self,
+        coordinator: EvcNetCoordinator,
+        spot_id: str,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._spot_id = spot_id
+        self._entry = entry
+        self._attr_unique_id = f"{spot_id}_charging"
+
+        # Get spot info from coordinator data
+        spot_info = coordinator.data.get(spot_id, {}).get("info", {})
+
+        # Use NAME field, or fallback to spot ID
+        spot_name = spot_info.get("NAME")
+        if not spot_name or spot_name.strip() == "":
+            spot_name = f"Charge Spot {spot_id}"
+
+        self._attr_name = f"{spot_name} Charging"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, spot_id)},
+            "name": spot_name,
+            "manufacturer": "Last Mile Solutions",
+            "model": "EVC-net Charging Station",
+            "sw_version": spot_info.get("SOFTWARE_VERSION"),
+        }
+
+        # Store customer and card IDs for starting transactions
+        # Priority: 1) Config entry, 2) Auto-detected from API
+        self._customer_id = entry.data.get(CONF_CUSTOMER_ID)
+        self._card_id = entry.data.get(CONF_CARD_ID)
+
+        # Try to extract from current data if not in config
+        if not self._card_id or not self._customer_id:
+            self._extract_ids_from_data()
+
+        if self._card_id:
+            _LOGGER.info(
+                "Card ID configured for spot %s: %s (source: %s)",
+                spot_id,
+                self._card_id,
+                "config" if entry.data.get(CONF_CARD_ID) else "auto-detected"
+            )
+
+    def _extract_ids_from_data(self) -> None:
+        """Extract customer_id and card_id from coordinator data."""
+        spot_data = self.coordinator.data.get(self._spot_id, {})
+        overview = spot_data.get("overview", [])
+
+        if isinstance(overview, list) and len(overview) > 0:
+            if isinstance(overview[0], list) and len(overview[0]) > 0:
+                overview_info = overview[0][0]
+
+                # Only auto-detect if not already set from config
+                if not self._card_id and "CARDID" in overview_info and overview_info["CARDID"]:
+                    self._card_id = overview_info["CARDID"]
+                    _LOGGER.info("Auto-detected card_id: %s for spot %s", self._card_id, self._spot_id)
+
+                if not self._customer_id and "CUSTOMERS_IDX" in overview_info:
+                    self._customer_id = overview_info["CUSTOMERS_IDX"]
+                    _LOGGER.debug("Auto-detected customer_id: %s for spot %s", self._customer_id, self._spot_id)
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if charging is active."""
+        # Always try to extract IDs when we have data
+        self._extract_ids_from_data()
+
+        spot_data = self.coordinator.data.get(self._spot_id, {})
+
+        # Check overview data first (most accurate)
+        overview = spot_data.get("overview", [])
+        if isinstance(overview, list) and len(overview) > 0:
+            if isinstance(overview[0], list) and len(overview[0]) > 0:
+                overview_info = overview[0][0]
+
+                # Check NOTIFICATION field for human-readable status
+                notification = overview_info.get("NOTIFICATION", "").lower()
+                if notification and any(keyword in notification for keyword in CHARGING_KEYWORDS):
+                    return True
+
+                # Check STATUS field (numeric codes)
+                status = overview_info.get("STATUS")
+                if status:
+                    status_str = str(status)
+                    # Check if status indicates active charging session
+                    if status_str in CHARGING_STATUS_CODES.values():
+                        return True
+
+                # Check if there's active power
+                power = overview_info.get("MOM_POWER_KW")
+                if power is not None and float(power) > 0:
+                    return True
+
+                # Check if there's an active transaction (even with 0 energy at start)
+                trans_time = overview_info.get("TRANSACTION_TIME_H_M")
+                if trans_time and trans_time != "" and trans_time != "00:00":
+                    # There's an active transaction with a timer running
+                    return True
+
+        # Fallback to info data
+        spot_info = spot_data.get("info", {})
+        status = spot_info.get("STATUS")
+        if status:
+            status_lower = str(status).lower()
+            if any(keyword in status_lower for keyword in ["charging", "occupied", "active", "busy"]):
+                return True
+
+        power = spot_info.get("MOM_POWER_KW")
+        if power is not None and float(power) > 0:
+            return True
+
+        trans_energy = spot_info.get("TRANS_ENERGY_DELIVERED_KWH")
+        if trans_energy is not None and float(trans_energy) > 0:
+            return True
+
+        return False
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # Entity is available if we have data for this spot
+        return self._spot_id in self.coordinator.data
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Start charging."""
+        try:
+            # Get customer_id and card_id from the spot overview
+            spot_data = self.coordinator.data.get(self._spot_id, {})
+            spot_info = spot_data.get("info", {})
+            overview = spot_data.get("overview", [])
+
+            _LOGGER.debug("Turn on - spot_info: %s", spot_info)
+            _LOGGER.debug("Turn on - overview: %s", overview)
+
+            # Extract from overview data (most reliable when there's an active session)
+            if isinstance(overview, list) and len(overview) > 0:
+                if isinstance(overview[0], list) and len(overview[0]) > 0:
+                    overview_info = overview[0][0]
+
+                    # Get card_id from CARDID field (if not from config)
+                    if not self._card_id and "CARDID" in overview_info:
+                        self._card_id = overview_info.get("CARDID")
+                        _LOGGER.debug("Found card_id in overview: %s", self._card_id)
+
+                    # Get customer_id from CUSTOMERS_IDX (if not from config)
+                    if not self._customer_id and "CUSTOMERS_IDX" in overview_info:
+                        self._customer_id = overview_info.get("CUSTOMERS_IDX")
+                        _LOGGER.debug("Found customer_id in overview: %s", self._customer_id)
+
+            # Fallback to info data
+            if not self._customer_id:
+                self._customer_id = spot_info.get("CUSTOMERS_IDX")
+
+            # If we still don't have card_id, we need to get it from the user
+            if not self._card_id:
+                _LOGGER.error(
+                    "Cannot start charging: card_id not available for spot %s. "
+                    "Please reconfigure the integration and provide your RFID card ID, "
+                    "or start a charging session manually once to auto-detect it.",
+                    self._spot_id
+                )
+                return
+
+            # Use empty string for customer_id if None (the API seems to accept this)
+            customer_id = str(self._customer_id) if self._customer_id else ""
+
+            _LOGGER.info(
+                "Starting charging for spot %s with card %s (customer: %s)",
+                self._spot_id,
+                self._card_id,
+                customer_id or "none"
+            )
+
+            # Get the channel number from spot info
+            channel = str(spot_info.get("CHANNEL", "0"))
+
+            await self.coordinator.client.start_charging(
+                self._spot_id,
+                customer_id,
+                self._card_id,
+                channel
+            )
+
+            # Wait a bit for the charging station to process the command
+            # before refreshing the status
+            await asyncio.sleep(3)
+
+            # Force a refresh to get the new state
+            await self.coordinator.async_request_refresh()
+
+            # Also update this entity to reflect the change
+            self.async_write_ha_state()
+
+        except Exception as err:
+            _LOGGER.error("Failed to start charging: %s", err, exc_info=True)
+            # Force refresh even on error to get accurate state
+            await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Stop charging."""
+        try:
+            spot_data = self.coordinator.data.get(self._spot_id, {})
+            spot_info = spot_data.get("info", {})
+
+            # Get the channel number from spot info
+            channel = str(spot_info.get("CHANNEL", "1"))
+
+            _LOGGER.info("Stopping charging for spot %s on channel %s", self._spot_id, channel)
+
+            await self.coordinator.client.stop_charging(self._spot_id, channel)
+
+            # Wait a bit for the charging station to process the command
+            # before refreshing the status
+            await asyncio.sleep(3)
+
+            # Force a refresh to get the new state
+            await self.coordinator.async_request_refresh()
+
+            # Also update this entity to reflect the change
+            self.async_write_ha_state()
+
+        except Exception as err:
+            _LOGGER.error("Failed to stop charging: %s", err)
+            # Force refresh even on error to get accurate state
+            await self.coordinator.async_request_refresh()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        spot_data = self.coordinator.data.get(self._spot_id, {})
+        spot_info = spot_data.get("info", {})
+
+        # Try to get more details from overview
+        overview = spot_data.get("overview", [])
+        overview_info = {}
+        if isinstance(overview, list) and len(overview) > 0:
+            if isinstance(overview[0], list) and len(overview[0]) > 0:
+                overview_info = overview[0][0]
+
+        attributes = {
+            "spot_id": self._spot_id,
+            "status": overview_info.get("STATUS") or spot_info.get("STATUS"),
+            "power_kw": overview_info.get("MOM_POWER_KW") or spot_info.get("MOM_POWER_KW"),
+            "transaction_energy_kwh": overview_info.get("TRANS_ENERGY_DELIVERED_KWH") or spot_info.get("TRANS_ENERGY_DELIVERED_KWH"),
+            "transaction_time": overview_info.get("TRANSACTION_TIME_H_M") or spot_info.get("TRANSACTION_TIME_H_M"),
+            "customer_id": self._customer_id or spot_info.get("CUSTOMERS_IDX"),
+            "card_id": self._card_id,
+            "channel": spot_info.get("CHANNEL"),
+        }
+
+        # Remove None values
+        return {k: v for k, v in attributes.items() if v is not None}
