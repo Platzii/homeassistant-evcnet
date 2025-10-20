@@ -10,8 +10,6 @@ CONF_CUSTOMER_ID = "customer_id"
 # Default values
 DEFAULT_BASE_URL = "https://50five-sbelux.evc-net.com"
 DEFAULT_SCAN_INTERVAL = 30  # seconds
-MIN_SCAN_INTERVAL = 10  # minimum seconds between updates
-MAX_SCAN_INTERVAL = 300  # maximum seconds between updates
 
 # API endpoints
 LOGIN_ENDPOINT = "/Login/Login"
