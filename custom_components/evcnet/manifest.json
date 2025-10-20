@@ -1,0 +1,12 @@
+{
+  "codeowners": ["@Platzii"],
+  "config_flow": true,
+  "documentation": "https://github.com/Platzii/homeassistant-evcnet",
+  "domain": "evcnet",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Platzii/homeassistant-evcnet/issues",
+  "name": "EVC-net (Last Mile Solutions)",
+  "requirements": ["aiohttp>=3.8.0"],
+  "version": "0.0.1"
+}

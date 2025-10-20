@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to EVC-net",
+        "description": "Enter your EVC-net account credentials",
+        "data": {
+          "base_url": "Base URL",
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "card_config": {
+        "title": "Card Configuration (Optional)",
+        "description": "Provide your RFID card ID to enable remote start/stop of charging sessions. You can leave this blank and it will be auto-detected from your next charging session.",
+        "data": {
+          "card_id": "RFID Card ID",
+          "customer_id": "Customer ID (optional)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password",
+      "cannot_connect": "Cannot connect to EVC-net",
+      "invalid_url": "Invalid URL format. Please enter a valid URL starting with http:// or https://",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This account is already configured"
+    }
+  }
+}
