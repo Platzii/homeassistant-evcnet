@@ -190,10 +190,6 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
                     self._customer_id = status_info.get("CUSTOMERS_IDX")
                     _LOGGER.debug("Found customer_id in status: %s", self._customer_id)
 
-            # Fallback to info data
-            if not self._customer_id:
-                self._customer_id = spot_info.get("CUSTOMERS_IDX")
-
             # If we still don't have card_id, we need to get it from the user
             if not self._card_id:
                 _LOGGER.error(
