@@ -211,7 +211,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             )
 
             # Get the channel number from spot info
-            channel = str(spot_info.get("CHANNEL", "0"))
+            channel = str(spot_info.get("CHANNEL", "1"))
 
             await self.coordinator.client.start_charging(
                 self._spot_id,
