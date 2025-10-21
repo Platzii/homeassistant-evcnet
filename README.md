@@ -2,6 +2,12 @@
 
 This custom integration allows you to monitor and control your EVC-net (Last Mile Solutions) charging station through Home Assistant.
 
+## Disclaimer
+
+⚠️ **Important Notice**: This integration was largely developed using AI tooling, as the author has no prior experience with Python or Home Assistant integration development. While the code has been tested and appears to function correctly, please use it at your own discretion and report any issues you encounter.
+
+**Testing Environment**: This integration has been primarily tested on the 50five (BELUX) endpoint (`50five-sbelux.evc-net.com`) in combination with a Shell Recharge/NewMotion-Enovates EV charger (Home Advanced 3.0). Compatibility with other EVC-net endpoints or charging station models may vary.
+
 ## Features
 
 - **Sensors**: Monitor charging status, power consumption, and energy usage
