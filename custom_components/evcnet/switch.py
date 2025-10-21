@@ -85,19 +85,19 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
     def _extract_ids_from_data(self) -> None:
         """Extract customer_id and card_id from coordinator data."""
         spot_data = self.coordinator.data.get(self._spot_id, {})
-        overview = spot_data.get("overview", [])
+        status = spot_data.get("status", [])
 
-        if isinstance(overview, list) and len(overview) > 0:
-            if isinstance(overview[0], list) and len(overview[0]) > 0:
-                overview_info = overview[0][0]
+        if isinstance(status, list) and len(status) > 0:
+            if isinstance(status[0], list) and len(status[0]) > 0:
+                status_info = status[0][0]
 
                 # Only auto-detect if not already set from config
-                if not self._card_id and "CARDID" in overview_info and overview_info["CARDID"]:
-                    self._card_id = overview_info["CARDID"]
+                if not self._card_id and "CARDID" in status_info and status_info["CARDID"]:
+                    self._card_id = status_info["CARDID"]
                     _LOGGER.info("Auto-detected card_id: %s for spot %s", self._card_id, self._spot_id)
 
-                if not self._customer_id and "CUSTOMERS_IDX" in overview_info:
-                    self._customer_id = overview_info["CUSTOMERS_IDX"]
+                if not self._customer_id and "CUSTOMERS_IDX" in status_info:
+                    self._customer_id = status_info["CUSTOMERS_IDX"]
                     _LOGGER.debug("Auto-detected customer_id: %s for spot %s", self._customer_id, self._spot_id)
 
     @property
@@ -108,19 +108,19 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
         spot_data = self.coordinator.data.get(self._spot_id, {})
 
-        # Check overview data first (most accurate)
-        overview = spot_data.get("overview", [])
-        if isinstance(overview, list) and len(overview) > 0:
-            if isinstance(overview[0], list) and len(overview[0]) > 0:
-                overview_info = overview[0][0]
+        # Check status data first (most accurate)
+        status = spot_data.get("status", [])
+        if isinstance(status, list) and len(status) > 0:
+            if isinstance(status[0], list) and len(status[0]) > 0:
+                status_info = status[0][0]
 
                 # Check NOTIFICATION field for human-readable status
-                notification = overview_info.get("NOTIFICATION", "").lower()
+                notification = status_info.get("NOTIFICATION", "").lower()
                 if notification and any(keyword in notification for keyword in CHARGING_KEYWORDS):
                     return True
 
                 # Check STATUS field (numeric codes)
-                status = overview_info.get("STATUS")
+                status = status_info.get("STATUS")
                 if status:
                     status_str = str(status)
                     # Check if status indicates active charging session
@@ -128,12 +128,12 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
                         return True
 
                 # Check if there's active power
-                power = overview_info.get("MOM_POWER_KW")
+                power = status_info.get("MOM_POWER_KW")
                 if power is not None and float(power) > 0:
                     return True
 
                 # Check if there's an active transaction (even with 0 energy at start)
-                trans_time = overview_info.get("TRANSACTION_TIME_H_M")
+                trans_time = status_info.get("TRANSACTION_TIME_H_M")
                 if trans_time and trans_time != "" and trans_time != "00:00":
                     # There's an active transaction with a timer running
                     return True
@@ -165,28 +165,28 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start charging."""
         try:
-            # Get customer_id and card_id from the spot overview
+            # Get customer_id and card_id from the spot status
             spot_data = self.coordinator.data.get(self._spot_id, {})
             spot_info = spot_data.get("info", {})
-            overview = spot_data.get("overview", [])
+            status = spot_data.get("status", [])
 
             _LOGGER.debug("Turn on - spot_info: %s", spot_info)
-            _LOGGER.debug("Turn on - overview: %s", overview)
+            _LOGGER.debug("Turn on - status: %s", status)
 
-            # Extract from overview data (most reliable when there's an active session)
-            if isinstance(overview, list) and len(overview) > 0:
-                if isinstance(overview[0], list) and len(overview[0]) > 0:
-                    overview_info = overview[0][0]
+            # Extract from status data (most reliable when there's an active session)
+            if isinstance(status, list) and len(status) > 0:
+                if isinstance(status[0], list) and len(status[0]) > 0:
+                    status_info = status[0][0]
 
                     # Get card_id from CARDID field (if not from config)
-                    if not self._card_id and "CARDID" in overview_info:
-                        self._card_id = overview_info.get("CARDID")
-                        _LOGGER.debug("Found card_id in overview: %s", self._card_id)
+                    if not self._card_id and "CARDID" in status_info:
+                        self._card_id = status_info.get("CARDID")
+                        _LOGGER.debug("Found card_id in status: %s", self._card_id)
 
                     # Get customer_id from CUSTOMERS_IDX (if not from config)
-                    if not self._customer_id and "CUSTOMERS_IDX" in overview_info:
-                        self._customer_id = overview_info.get("CUSTOMERS_IDX")
-                        _LOGGER.debug("Found customer_id in overview: %s", self._customer_id)
+                    if not self._customer_id and "CUSTOMERS_IDX" in status_info:
+                        self._customer_id = status_info.get("CUSTOMERS_IDX")
+                        _LOGGER.debug("Found customer_id in status: %s", self._customer_id)
 
             # Fallback to info data
             if not self._customer_id:
@@ -271,19 +271,19 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         spot_data = self.coordinator.data.get(self._spot_id, {})
         spot_info = spot_data.get("info", {})
 
-        # Try to get more details from overview
-        overview = spot_data.get("overview", [])
-        overview_info = {}
-        if isinstance(overview, list) and len(overview) > 0:
-            if isinstance(overview[0], list) and len(overview[0]) > 0:
-                overview_info = overview[0][0]
+        # Try to get more details from status
+        status = spot_data.get("status", [])
+        status_info = {}
+        if isinstance(status, list) and len(status) > 0:
+            if isinstance(status[0], list) and len(status[0]) > 0:
+                status_info = status[0][0]
 
         attributes = {
             "spot_id": self._spot_id,
-            "status": overview_info.get("STATUS") or spot_info.get("STATUS"),
-            "power_kw": overview_info.get("MOM_POWER_KW") or spot_info.get("MOM_POWER_KW"),
-            "transaction_energy_kwh": overview_info.get("TRANS_ENERGY_DELIVERED_KWH") or spot_info.get("TRANS_ENERGY_DELIVERED_KWH"),
-            "transaction_time": overview_info.get("TRANSACTION_TIME_H_M") or spot_info.get("TRANSACTION_TIME_H_M"),
+            "status": status_info.get("STATUS") or spot_info.get("STATUS"),
+            "power_kw": status_info.get("MOM_POWER_KW") or spot_info.get("MOM_POWER_KW"),
+            "transaction_energy_kwh": status_info.get("TRANS_ENERGY_DELIVERED_KWH") or spot_info.get("TRANS_ENERGY_DELIVERED_KWH"),
+            "transaction_time": status_info.get("TRANSACTION_TIME_H_M") or spot_info.get("TRANSACTION_TIME_H_M"),
             "customer_id": self._customer_id or spot_info.get("CUSTOMERS_IDX"),
             "card_id": self._card_id,
             "channel": spot_info.get("CHANNEL"),
