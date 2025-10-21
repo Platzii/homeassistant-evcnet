@@ -107,10 +107,6 @@ The integration uses configuration in this order:
 2. **Initial setup** (set during integration setup)
 3. **Auto-detection** (detected from API responses) - fallback
 
-## Notes
-
-⚠️ **Important**: To start charging, the integration needs `customer_id` and `card_id`. These should be automatically detected from your account. If starting charging fails, you may need to manually configure these IDs.
-
 ## Troubleshooting
 
 Enable debug logging by adding this to your `configuration.yaml`:

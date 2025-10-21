@@ -69,9 +69,9 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         self._customer_id = entry.options.get(CONF_CUSTOMER_ID) or entry.data.get(CONF_CUSTOMER_ID)
         self._card_id = entry.options.get(CONF_CARD_ID) or entry.data.get(CONF_CARD_ID)
 
-        # Try to extract from current data if not in config
-        if not self._card_id or not self._customer_id:
-            self._extract_ids_from_data()
+        # Try to extract card_id from current data if not manually configured
+        if not self._card_id:
+            self._extract_card_id_from_data()
 
         if self._card_id:
             source = "options" if entry.options.get(CONF_CARD_ID) else ("config" if entry.data.get(CONF_CARD_ID) else "auto-detected")
@@ -82,8 +82,8 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
                 source
             )
 
-    def _extract_ids_from_data(self) -> None:
-        """Extract customer_id and card_id from coordinator data."""
+    def _extract_card_id_from_data(self) -> None:
+        """Extract card_id from coordinator data."""
         spot_data = self.coordinator.data.get(self._spot_id, {})
         status = spot_data.get("status", [])
 
@@ -94,10 +94,6 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             if not self._card_id and "CARDID" in status_info and status_info["CARDID"]:
                 self._card_id = status_info["CARDID"]
                 _LOGGER.info("Auto-detected card_id: %s for spot %s", self._card_id, self._spot_id)
-
-            if not self._customer_id and "CUSTOMERS_IDX" in status_info:
-                self._customer_id = status_info["CUSTOMERS_IDX"]
-                _LOGGER.debug("Auto-detected customer_id: %s for spot %s", self._customer_id, self._spot_id)
 
     def _is_valid_status_data(self, status: list) -> bool:
         """Validate status data structure."""
@@ -137,9 +133,9 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
     @property
     def is_on(self) -> bool:
         """Return true if charging is active."""
-        # Extract IDs if we don't have them yet
-        if not self._card_id or not self._customer_id:
-            self._extract_ids_from_data()
+        # Try to extract card_id from current data if not in config
+        if not self._card_id:
+            self._extract_card_id_from_data()
 
         spot_data = self.coordinator.data.get(self._spot_id, {})
         status = spot_data.get("status", [])
@@ -171,26 +167,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start charging."""
         try:
-            # Get customer_id and card_id from the spot status
-            spot_data = self.coordinator.data.get(self._spot_id, {})
-            spot_info = spot_data.get("info", {})
-            status = spot_data.get("status", [])
-
-            # Extract from status data (most reliable when there's an active session)
-            if self._is_valid_status_data(status):
-                status_info = status[0][0]
-
-                # Get card_id from CARDID field (if not from config)
-                if not self._card_id and "CARDID" in status_info:
-                    self._card_id = status_info.get("CARDID")
-                    _LOGGER.debug("Found card_id in status: %s", self._card_id)
-
-                # Get customer_id from CUSTOMERS_IDX (if not from config)
-                if not self._customer_id and "CUSTOMERS_IDX" in status_info:
-                    self._customer_id = status_info.get("CUSTOMERS_IDX")
-                    _LOGGER.debug("Found customer_id in status: %s", self._customer_id)
-
-            # If we still don't have card_id, we need to get it from the user
+            # If we don't have card_id, we need to get it from the user
             if not self._card_id:
                 _LOGGER.error(
                     "Cannot start charging: card_id not available for spot %s. "
@@ -203,15 +180,18 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             # Use empty string for customer_id if None (the API seems to accept this)
             customer_id = str(self._customer_id) if self._customer_id else ""
 
+            # Get the channel number from spot info
+            spot_data = self.coordinator.data.get(self._spot_id, {})
+            spot_info = spot_data.get("info", {})
+            channel = str(spot_info.get("CHANNEL", "1"))
+
             _LOGGER.info(
-                "Starting charging for spot %s with card %s (customer: %s)",
+                "Starting charging for spot %s on channel %s with card %s (customer: %s)",
                 self._spot_id,
+                channel,
                 self._card_id,
                 customer_id or "none"
             )
-
-            # Get the channel number from spot info
-            channel = str(spot_info.get("CHANNEL", "1"))
 
             await self.coordinator.client.start_charging(
                 self._spot_id,
@@ -232,8 +212,10 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
         except Exception as err:
             _LOGGER.error("Failed to start charging: %s", err, exc_info=True)
+
             # Force refresh even on error to get accurate state
             await self.coordinator.async_request_refresh()
+
             # Also update this entity to reflect the change
             self.async_write_ha_state()
 
@@ -262,8 +244,10 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
         except Exception as err:
             _LOGGER.error("Failed to stop charging: %s", err)
+
             # Force refresh even on error to get accurate state
             await self.coordinator.async_request_refresh()
+
             # Also update this entity to reflect the change
             self.async_write_ha_state()
 
@@ -271,7 +255,6 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         spot_data = self.coordinator.data.get(self._spot_id, {})
-        spot_info = spot_data.get("info", {})
 
         # Try to get more details from status
         status = spot_data.get("status", [])
