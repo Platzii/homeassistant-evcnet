@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_CARD_ID, CONF_CUSTOMER_ID, DOMAIN, CHARGING_STATUS_CODES, CHARGING_KEYWORDS
+from .const import CONF_CARD_ID, CONF_CUSTOMER_ID, DOMAIN, CHARGESPOT_STATUS1_FLAGS, CHARGESPOT_STATUS2_FLAGS
 from .coordinator import EvcNetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,61 +100,68 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
                     self._customer_id = status_info["CUSTOMERS_IDX"]
                     _LOGGER.debug("Auto-detected customer_id: %s for spot %s", self._customer_id, self._spot_id)
 
-    @property
-    def is_on(self) -> bool:
-        """Return true if charging is active."""
-        # Always try to extract IDs when we have data
-        self._extract_ids_from_data()
+    def _is_valid_status_data(self, status: list) -> bool:
+        """Validate status data structure."""
+        return (isinstance(status, list) and
+                len(status) > 0 and
+                isinstance(status[0], list) and
+                len(status[0]) > 0)
 
-        spot_data = self.coordinator.data.get(self._spot_id, {})
+    def _parse_status_flags(self, status_value: int) -> tuple[int, int]:
+        """Parse status value into two 32-bit integers."""
+        hex_status = str(status_value).zfill(16)
+        status1 = int(hex_status[0:8], 16)  # First 8 hex chars (upper 32 bits)
+        status2 = int(hex_status[8:], 16)   # Last 8 hex chars (lower 32 bits)
+        return status1, status2
 
-        # Check status data first (most accurate)
-        status = spot_data.get("status", [])
-        if isinstance(status, list) and len(status) > 0:
-            if isinstance(status[0], list) and len(status[0]) > 0:
-                status_info = status[0][0]
-
-                # Check NOTIFICATION field for human-readable status
-                notification = status_info.get("NOTIFICATION", "").lower()
-                if notification and any(keyword in notification for keyword in CHARGING_KEYWORDS):
-                    return True
-
-                # Check STATUS field (numeric codes)
-                status = status_info.get("STATUS")
-                if status:
-                    status_str = str(status)
-                    # Check if status indicates active charging session
-                    if status_str in CHARGING_STATUS_CODES.values():
-                        return True
-
-                # Check if there's active power
-                power = status_info.get("MOM_POWER_KW")
-                if power is not None and float(power) > 0:
-                    return True
-
-                # Check if there's an active transaction (even with 0 energy at start)
-                trans_time = status_info.get("TRANSACTION_TIME_H_M")
-                if trans_time and trans_time != "" and trans_time != "00:00":
-                    # There's an active transaction with a timer running
-                    return True
-
-        # Fallback to info data
-        spot_info = spot_data.get("info", {})
-        status = spot_info.get("STATUS")
-        if status:
-            status_lower = str(status).lower()
-            if any(keyword in status_lower for keyword in ["charging", "occupied", "active", "busy"]):
-                return True
-
-        power = spot_info.get("MOM_POWER_KW")
-        if power is not None and float(power) > 0:
+    def _has_error_conditions(self, status1: int, status2: int) -> bool:
+        """Check for error conditions that prevent charging."""
+        # Check for no communication (highest priority)
+        if status1 & CHARGESPOT_STATUS1_FLAGS["NO_COMMUNICATION"]:
             return True
 
-        trans_energy = spot_info.get("TRANS_ENERGY_DELIVERED_KWH")
-        if trans_energy is not None and float(trans_energy) > 0:
+        # Check if blocked
+        if status2 & CHARGESPOT_STATUS2_FLAGS["BLOCKED"]:
+            return True
+
+        # Check for fault conditions
+        if (status1 & CHARGESPOT_STATUS1_FLAGS["FAULT"] or
+            status2 & CHARGESPOT_STATUS2_FLAGS["FAULT"]):
             return True
 
         return False
+
+    def _is_charging_active(self, status2: int) -> bool:
+        """Check if charging is currently active."""
+        return bool(status2 & CHARGESPOT_STATUS2_FLAGS["OCCUPIED"])
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if charging is active."""
+        # Extract IDs if we don't have them yet
+        if not self._card_id or not self._customer_id:
+            self._extract_ids_from_data()
+
+        spot_data = self.coordinator.data.get(self._spot_id, {})
+        status = spot_data.get("status", [])
+
+        if not self._is_valid_status_data(status):
+            return False
+
+        status_info = status[0][0]
+        status_value = status_info.get("STATUS")
+
+        if status_value is None:
+            return False
+
+        status1, status2 = self._parse_status_flags(status_value)
+
+        # Check for error conditions first
+        if self._has_error_conditions(status1, status2):
+            return False
+
+        # Check operational status
+        return self._is_charging_active(status2)
 
     @property
     def available(self) -> bool:
@@ -280,13 +287,13 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
         attributes = {
             "spot_id": self._spot_id,
-            "status": status_info.get("STATUS") or spot_info.get("STATUS"),
-            "power_kw": status_info.get("MOM_POWER_KW") or spot_info.get("MOM_POWER_KW"),
-            "transaction_energy_kwh": status_info.get("TRANS_ENERGY_DELIVERED_KWH") or spot_info.get("TRANS_ENERGY_DELIVERED_KWH"),
-            "transaction_time": status_info.get("TRANSACTION_TIME_H_M") or spot_info.get("TRANSACTION_TIME_H_M"),
-            "customer_id": self._customer_id or spot_info.get("CUSTOMERS_IDX"),
+            "status": status_info.get("STATUS"),
+            "power_kw": status_info.get("MOM_POWER_KW"),
+            "transaction_energy_kwh": status_info.get("TRANS_ENERGY_DELIVERED_KWH"),
+            "transaction_time": status_info.get("TRANSACTION_TIME_H_M"),
+            "customer_id": self._customer_id,
             "card_id": self._card_id,
-            "channel": spot_info.get("CHANNEL"),
+            "channel": status_info.get("CHANNEL"),
         }
 
         # Remove None values

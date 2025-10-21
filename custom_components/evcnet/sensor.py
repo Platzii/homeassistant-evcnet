@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, STATUS_DESCRIPTIONS
+from .const import DOMAIN
 from .coordinator import EvcNetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def convert_time_to_decimal_hours(time_str: str) -> float:
     """Convert HH:MM time format to decimal hours (e.g., 2:30 -> 2.5)."""
     if not time_str or not isinstance(time_str, str):
         return 0.0
-    
+
     try:
         # Split by colon and convert to integers
         parts = time_str.split(':')
