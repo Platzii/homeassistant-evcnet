@@ -113,7 +113,11 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Pre-fill with current values
         current_data = config_entry.data
-        _LOGGER.debug("Current config entry data: %s", current_data)
+        # Don't log password for security reasons.
+        redacted_data = {**current_data}
+        if CONF_PASSWORD in redacted_data:
+            redacted_data[CONF_PASSWORD] = "***REDACTED***"
+        _LOGGER.debug("Current config entry data: %s", redacted_data)
         reconfigure_schema = vol.Schema(
             {
                 vol.Required(CONF_BASE_URL, default=current_data.get(CONF_BASE_URL)): str,
