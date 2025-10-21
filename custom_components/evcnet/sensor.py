@@ -54,10 +54,10 @@ def get_nested_value(data: dict, *keys: str, default: Any = None) -> Any:
     return current if current is not None else default
 
 
-def convert_time_to_minutes(time_str: str) -> int:
-    """Convert HH:MM time format to total minutes."""
+def convert_time_to_decimal_hours(time_str: str) -> float:
+    """Convert HH:MM time format to decimal hours (e.g., 2:30 -> 2.5)."""
     if not time_str or not isinstance(time_str, str):
-        return 0
+        return 0.0
     
     try:
         # Split by colon and convert to integers
@@ -65,13 +65,14 @@ def convert_time_to_minutes(time_str: str) -> int:
         if len(parts) == 2:
             hours = int(parts[0])
             minutes = int(parts[1])
-            return hours * 60 + minutes
+            # Convert to decimal hours: hours + (minutes / 60)
+            return hours + (minutes / 60.0)
         else:
             _LOGGER.warning("Invalid time format: %s", time_str)
-            return 0
+            return 0.0
     except (ValueError, TypeError) as err:
-        _LOGGER.warning("Error converting time '%s' to minutes: %s", time_str, err)
-        return 0
+        _LOGGER.warning("Error converting time '%s' to decimal hours: %s", time_str, err)
+        return 0.0
 
 
 SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
@@ -128,9 +129,9 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         key="session_time",
         name="Session Time",
         device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement=UnitOfTime.MINUTES,
+        native_unit_of_measurement=UnitOfTime.HOURS,
         icon="mdi:timer",
-        value_fn=lambda data: convert_time_to_minutes(
+        value_fn=lambda data: convert_time_to_decimal_hours(
             get_nested_value(data, "status", 0, 0, "TRANSACTION_TIME_H_M", default="")
         ),
     ),
