@@ -87,18 +87,17 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         spot_data = self.coordinator.data.get(self._spot_id, {})
         status = spot_data.get("status", [])
 
-        if isinstance(status, list) and len(status) > 0:
-            if isinstance(status[0], list) and len(status[0]) > 0:
-                status_info = status[0][0]
+        if self._is_valid_status_data(status):
+            status_info = status[0][0]
 
-                # Only auto-detect if not already set from config
-                if not self._card_id and "CARDID" in status_info and status_info["CARDID"]:
-                    self._card_id = status_info["CARDID"]
-                    _LOGGER.info("Auto-detected card_id: %s for spot %s", self._card_id, self._spot_id)
+            # Only auto-detect if not already set from config
+            if not self._card_id and "CARDID" in status_info and status_info["CARDID"]:
+                self._card_id = status_info["CARDID"]
+                _LOGGER.info("Auto-detected card_id: %s for spot %s", self._card_id, self._spot_id)
 
-                if not self._customer_id and "CUSTOMERS_IDX" in status_info:
-                    self._customer_id = status_info["CUSTOMERS_IDX"]
-                    _LOGGER.debug("Auto-detected customer_id: %s for spot %s", self._customer_id, self._spot_id)
+            if not self._customer_id and "CUSTOMERS_IDX" in status_info:
+                self._customer_id = status_info["CUSTOMERS_IDX"]
+                _LOGGER.debug("Auto-detected customer_id: %s for spot %s", self._customer_id, self._spot_id)
 
     def _is_valid_status_data(self, status: list) -> bool:
         """Validate status data structure."""
@@ -181,19 +180,18 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             _LOGGER.debug("Turn on - status: %s", status)
 
             # Extract from status data (most reliable when there's an active session)
-            if isinstance(status, list) and len(status) > 0:
-                if isinstance(status[0], list) and len(status[0]) > 0:
-                    status_info = status[0][0]
+            if self._is_valid_status_data(status):
+                status_info = status[0][0]
 
-                    # Get card_id from CARDID field (if not from config)
-                    if not self._card_id and "CARDID" in status_info:
-                        self._card_id = status_info.get("CARDID")
-                        _LOGGER.debug("Found card_id in status: %s", self._card_id)
+                # Get card_id from CARDID field (if not from config)
+                if not self._card_id and "CARDID" in status_info:
+                    self._card_id = status_info.get("CARDID")
+                    _LOGGER.debug("Found card_id in status: %s", self._card_id)
 
-                    # Get customer_id from CUSTOMERS_IDX (if not from config)
-                    if not self._customer_id and "CUSTOMERS_IDX" in status_info:
-                        self._customer_id = status_info.get("CUSTOMERS_IDX")
-                        _LOGGER.debug("Found customer_id in status: %s", self._customer_id)
+                # Get customer_id from CUSTOMERS_IDX (if not from config)
+                if not self._customer_id and "CUSTOMERS_IDX" in status_info:
+                    self._customer_id = status_info.get("CUSTOMERS_IDX")
+                    _LOGGER.debug("Found customer_id in status: %s", self._customer_id)
 
             # Fallback to info data
             if not self._customer_id:
@@ -281,9 +279,8 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         # Try to get more details from status
         status = spot_data.get("status", [])
         status_info = {}
-        if isinstance(status, list) and len(status) > 0:
-            if isinstance(status[0], list) and len(status[0]) > 0:
-                status_info = status[0][0]
+        if self._is_valid_status_data(status):
+            status_info = status[0][0]
 
         attributes = {
             "spot_id": self._spot_id,
