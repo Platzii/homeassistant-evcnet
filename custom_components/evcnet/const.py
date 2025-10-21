@@ -24,25 +24,19 @@ ATTR_ENERGY = "energy"
 ATTR_CUSTOMER_ID = "customer_id"
 ATTR_CARD_ID = "card_id"
 
-# Charging status codes
-CHARGING_STATUS_CODES = {
-    "CHARGING_NO_POWER": "10000",
-    "CHARGING_PARTIAL": "20000", 
-    "CHARGING_NORMAL": "30000",
-    "CHARGING_HIGH": "40000",
-    "CHARGING_FULL": "50000",
+# Status flags for bitwise operations
+# Status1 flags (upper 32 bits)
+CHARGESPOT_STATUS1_FLAGS = {
+    "NO_COMMUNICATION": 0x30000000, # No communication with charging station
+    "FAULT": 0x4000002F,            # Various fault conditions
 }
 
-# Status code descriptions for user-friendly display
-STATUS_DESCRIPTIONS = {
-    "10000": "Charging (No Power)",
-    "20000": "Charging (Partial)",
-    "30000": "Charging (Normal)",
-    "40000": "Charging (High)",
-    "50000": "Charging (Complete)",
+# Status2 flags (lower 32 bits)
+CHARGESPOT_STATUS2_FLAGS = {
+    "BLOCKED": 0x20000,             # Charging spot is blocked
+    "OCCUPIED": 0x10000,            # Charging spot is occupied
+    "FULL": 0x40000,                # Charging is complete/full
+    "RESERVED": 0x400,              # Charging spot is reserved
+    "FAULT": 0xD8407940,            # Various fault conditions
 }
-
-# Charging keywords for status detection
-CHARGING_KEYWORDS = [
-    "laden", "charging", "bezig", "actief", "vol", "full", "charge", "lading"
-]
+# Note: AVAILABLE state is represented by the absence of all status2 flags
