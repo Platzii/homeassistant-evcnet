@@ -8,5 +8,5 @@
   "issue_tracker": "https://github.com/Platzii/homeassistant-evcnet/issues",
   "name": "EVC-net (Last Mile Solutions)",
   "requirements": ["aiohttp>=3.8.0"],
-  "version": "0.0.1"
+  "version": "0.0.8"
 }
