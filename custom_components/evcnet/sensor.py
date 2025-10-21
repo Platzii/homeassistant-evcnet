@@ -54,6 +54,26 @@ def get_nested_value(data: dict, *keys: str, default: Any = None) -> Any:
     return current if current is not None else default
 
 
+def convert_time_to_minutes(time_str: str) -> int:
+    """Convert HH:MM time format to total minutes."""
+    if not time_str or not isinstance(time_str, str):
+        return 0
+    
+    try:
+        # Split by colon and convert to integers
+        parts = time_str.split(':')
+        if len(parts) == 2:
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            return hours * 60 + minutes
+        else:
+            _LOGGER.warning("Invalid time format: %s", time_str)
+            return 0
+    except (ValueError, TypeError) as err:
+        _LOGGER.warning("Error converting time '%s' to minutes: %s", time_str, err)
+        return 0
+
+
 SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
     EvcNetSensorEntityDescription(
         key="status",
@@ -110,8 +130,8 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MINUTES,
         icon="mdi:timer",
-        value_fn=lambda data: (
-            get_nested_value(data, "status", 0, 0, "TRANSACTION_TIME_H_M", default=0)
+        value_fn=lambda data: convert_time_to_minutes(
+            get_nested_value(data, "status", 0, 0, "TRANSACTION_TIME_H_M", default="")
         ),
     ),
     EvcNetSensorEntityDescription(
