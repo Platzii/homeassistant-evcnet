@@ -176,9 +176,6 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             spot_info = spot_data.get("info", {})
             status = spot_data.get("status", [])
 
-            _LOGGER.debug("Turn on - spot_info: %s", spot_info)
-            _LOGGER.debug("Turn on - status: %s", status)
-
             # Extract from status data (most reliable when there's an active session)
             if self._is_valid_status_data(status):
                 status_info = status[0][0]
