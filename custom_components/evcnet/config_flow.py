@@ -57,7 +57,7 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @config_entries.callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
         """Get the options flow for this handler."""
-        return EvcNetOptionsFlowHandler(config_entry)
+        return EvcNetOptionsFlowHandler()
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -67,6 +67,10 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         
         # Get the config entry from context
         config_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        
+        if not config_entry:
+            _LOGGER.error("Config entry not found for reconfigure flow")
+            return self.async_abort(reason="unknown")
 
         if user_input is not None:
             # Validate the user input
@@ -98,7 +102,7 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 CONF_PASSWORD: password,
                             }
                         )
-                        return self.async_create_entry(title="", data={})
+                        return self.async_abort(reason="reconfigure_successful")
                     else:
                         errors["base"] = "invalid_auth"
                 except aiohttp.ClientError:
@@ -109,6 +113,7 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Pre-fill with current values
         current_data = config_entry.data
+        _LOGGER.debug("Current config entry data: %s", current_data)
         reconfigure_schema = vol.Schema(
             {
                 vol.Required(CONF_BASE_URL, default=current_data.get(CONF_BASE_URL)): str,

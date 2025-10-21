@@ -26,7 +26,8 @@
       "unknown": "Unexpected error occurred"
     },
     "abort": {
-      "already_configured": "This account is already configured"
+      "already_configured": "This account is already configured",
+      "reconfigure_successful": "Configuration updated successfully"
     }
   },
   "options": {
