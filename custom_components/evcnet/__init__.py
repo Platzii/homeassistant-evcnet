@@ -22,7 +22,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     missing_keys = [key for key in required_keys if key not in entry.data]
     
     if missing_keys:
-        _LOGGER.error("Missing required configuration keys: %s", missing_keys)
+        _LOGGER.error(
+            "Missing required configuration keys: %s. "
+            "Please delete and re-add the integration: "
+            "Settings > Devices & Services > EVC-net > Delete",
+            missing_keys
+        )
         return False
     
     session = async_get_clientsession(hass)
