@@ -234,6 +234,8 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             _LOGGER.error("Failed to start charging: %s", err, exc_info=True)
             # Force refresh even on error to get accurate state
             await self.coordinator.async_request_refresh()
+            # Also update this entity to reflect the change
+            self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop charging."""
@@ -262,6 +264,8 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             _LOGGER.error("Failed to stop charging: %s", err)
             # Force refresh even on error to get accurate state
             await self.coordinator.async_request_refresh()
+            # Also update this entity to reflect the change
+            self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
