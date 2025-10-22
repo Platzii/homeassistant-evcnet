@@ -67,9 +67,12 @@ For each charging station, the integration creates:
 
 ### Sensors
 - **Status**: Current charging station status
-- **Current Power**: Active power draw in watts
+- **Status Code**: Raw status code from the charging station
 - **Total Energy**: Total energy consumed (kWh)
+- **Software Version**: Charging station software version
+- **Current Power**: Active power draw in kilowatts
 - **Session Energy**: Energy consumed in current session (kWh)
+- **Session Time**: Duration of current charging session in hours
 
 ### Switch
 - **Charging**: Turn on to start charging, off to stop
