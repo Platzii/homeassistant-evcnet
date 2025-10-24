@@ -21,6 +21,6 @@ jobs:
         cd "${{ github.workspace }}/custom_components/evcnet"
         zip homeassistant-evcnet.zip -r ./
     - name: Release
-      uses: softprops/action-gh-release@v2.4.5
+      uses: softprops/action-gh-release@v2.4.1
       with:
         files: ${{ github.workspace }}/custom_components/evcnet/homeassistant-evcnet.zip
