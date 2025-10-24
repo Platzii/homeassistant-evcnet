@@ -111,7 +111,7 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:flash",
         value_fn=lambda data: (
-            get_nested_value(data, "total_energy_usage", 0, "number", default="Unknown")
+            get_nested_value(data, "total_energy_usage", 0, "number", default=0)
         ),
     ),
     EvcNetSensorEntityDescription(
