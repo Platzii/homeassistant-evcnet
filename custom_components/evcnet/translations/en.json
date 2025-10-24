@@ -17,6 +17,15 @@
           "card_id": "RFID Card ID",
           "customer_id": "Customer ID (optional)"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure EVC-net",
+        "description": "Update your EVC-net connection credentials. Leave password blank to keep current password.",
+        "data": {
+          "base_url": "Base URL",
+          "username": "Email",
+          "password": "Password (leave blank to keep current)"
+        }
       }
     },
     "error": {
@@ -38,19 +47,6 @@
         "data": {
           "card_id": "RFID Card ID",
           "customer_id": "Customer ID (optional)"
-        }
-      }
-    }
-  },
-  "reconfigure": {
-    "step": {
-      "reconfigure": {
-        "title": "Reconfigure EVC-net",
-        "description": "Update your EVC-net connection credentials. Leave password blank to keep current password.",
-        "data": {
-          "base_url": "Base URL",
-          "username": "Email",
-          "password": "Password (leave blank to keep current)"
         }
       }
     }
