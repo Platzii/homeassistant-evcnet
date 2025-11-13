@@ -64,10 +64,10 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle reconfigure flow."""
         errors: dict[str, str] = {}
-        
+
         # Get the config entry from context
         config_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-        
+
         if not config_entry:
             _LOGGER.error("Config entry not found for reconfigure flow")
             return self.async_abort(reason="unknown")
@@ -79,10 +79,10 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 try:
                     session = async_get_clientsession(self.hass)
-                    
+
                     # Use existing password if not provided
                     password = user_input[CONF_PASSWORD] or config_entry.data[CONF_PASSWORD]
-                    
+
                     client = EvcNetApiClient(
                         user_input[CONF_BASE_URL],
                         user_input[CONF_USERNAME],
