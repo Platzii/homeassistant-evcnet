@@ -11,8 +11,9 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 ## Features
 
 - **Sensors**: Monitor charging status, power consumption, and energy usage
-- **Switch**: Start and stop charging sessions remotely
+- **Switch**: Start and stop charging sessions
 - **Real-time updates**: Automatic polling every 30 seconds
+- **Action call**: Start a charging session using an action (allows to define a specific RFID card)
 
 ## Installation
 
@@ -76,6 +77,24 @@ For each charging station, the integration creates:
 
 ### Switch
 - **Charging**: Turn on to start charging, off to stop
+
+## Using Multiple RFID Cards
+
+The integration supports using different RFID cards for different charging sessions. This is useful when you have multiple vehicles with different charging cards.
+
+### Using the Action
+
+You can use the `evcnet.start_charging` action to specify which RFID card to use:
+
+```yaml
+action: evcnet.start_charging
+target:
+  entity_id: switch.your_charging_station_charging # or device_id: 516934b04b9345cb26086fdb88de6467
+data:
+  card_id: "ABC12DEF34"  # Your RFID card ID
+```
+
+**Note**: If you don't specify a `card_id` in the action, the integration will use the default card configured in the integration settings.
 
 ## Configuration Options
 

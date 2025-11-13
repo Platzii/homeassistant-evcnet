@@ -24,8 +24,16 @@ async def async_setup_entry(
     coordinator: EvcNetCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities = []
+    # Initialize entities dict on coordinator if not exists
+    if not hasattr(coordinator, "entities"):
+        coordinator.entities = {}
+
     for spot_id in coordinator.data:
-        entities.append(EvcNetChargingSwitch(coordinator, spot_id, entry))
+        switch_entity = EvcNetChargingSwitch(coordinator, spot_id, entry)
+        entities.append(switch_entity)
+
+        # Store entity reference by unique_id for action access
+        coordinator.entities[switch_entity._attr_unique_id] = switch_entity
 
     async_add_entities(entities)
 
@@ -167,12 +175,16 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start charging."""
         try:
+            # Get card_id from kwargs (action call) or use configured/default card
+            card_id = kwargs.get("card_id") or self._card_id
+
             # If we don't have card_id, we need to get it from the user
-            if not self._card_id:
+            if not card_id:
                 _LOGGER.error(
                     "Cannot start charging: card_id not available for spot %s. "
                     "Please reconfigure the integration and provide your RFID card ID, "
-                    "or start a charging session manually once to auto-detect it.",
+                    "or start a charging session manually once to auto-detect it, "
+                    "or call the action with a card_id parameter.",
                     self._spot_id
                 )
                 return
@@ -189,14 +201,14 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
                 "Starting charging for spot %s on channel %s with card %s (customer: %s)",
                 self._spot_id,
                 channel,
-                self._card_id,
+                card_id,
                 customer_id or "none"
             )
 
             await self.coordinator.client.start_charging(
                 self._spot_id,
                 customer_id,
-                self._card_id,
+                card_id,
                 channel
             )
 

@@ -1,0 +1,14 @@
+start_charging:
+  name: Start charging
+  description: Start a charging session with an optional RFID card ID
+  target:
+    entity:
+      domain: switch
+      integration: evcnet
+  fields:
+    card_id:
+      name: RFID Card ID
+      description: Optional RFID card ID to use for this charging session. If not provided, uses the default card configured in the integration.
+      required: false
+      selector:
+        text:
