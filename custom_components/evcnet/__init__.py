@@ -20,7 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Validate required configuration
     required_keys = [CONF_BASE_URL, CONF_USERNAME, CONF_PASSWORD]
     missing_keys = [key for key in required_keys if key not in entry.data]
-    
+
     if missing_keys:
         _LOGGER.error(
             "Missing required configuration keys: %s. "
@@ -29,7 +29,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             missing_keys
         )
         return False
-    
+
     session = async_get_clientsession(hass)
 
     client = EvcNetApiClient(
