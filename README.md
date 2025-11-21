@@ -6,7 +6,7 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 
 **Important Notice**: This integration was developed with the assistance of AI tools, as I have little to no prior experience with Python or Home Assistant integration development. While the code has been tested and appears to function correctly, please use it at your own discretion and report any issues you encounter.
 
-**Testing Environment**: This integration has been primarily tested on the 50five (BELUX) endpoint (`50five-sbelux.evc-net.com`) in combination with a Shell Recharge/NewMotion-Enovates EV charger (Home Advanced 3.0). Compatibility with other EVC-net endpoints or charging station models may vary.
+**Testing Environment**: This integration has been primarily tested on the 50five (BELUX) endpoint (`50five-sbelux.evc-net.com`) in combination with a Shell Recharge/NewMotion-Enovates EV charger (Home Advanced 3.0). Compatibility with other EVC-net endpoints or charging station models may vary. Users have confirmed that the 50five Germany (`50five-sde.evc-net.com`) and UK (`50five-suk.evc-net.com`) endpoints work as well.
 
 ## Features
 
@@ -17,7 +17,16 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 
 ## Installation
 
-### HACS (Recommended)
+### HACS default repository (Recommended)
+
+1. Make sure [HACS](https://hacs.xyz/) is installed
+2. In HACS, search for "EVC-net (Last Mile Solutions)"
+3. Open the overflow menu (⋮) and click "Download"
+4. In the pop-up, you can select a specific version to install, or leave it empty to install the latest version
+5. Click "Download" to install the integration
+6. Restart Home Assistant
+
+### HACS custom repository
 
 1. Make sure [HACS](https://hacs.xyz/) is installed
 2. Add this repository as a custom repository in HACS:
@@ -49,7 +58,7 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 You have two options to find your RFID card ID:
 
 **Option 1: From Browser**
-1. Log in to https://50five-sbelux.evc-net.com in your browser
+1. Log in to the EVC-net platform (e.g.: https://50five-sbelux.evc-net.com) using your browser
 2. Navigate to Cards
 3. Find your Card ID in the table
 4. Use this when configuring the integration
