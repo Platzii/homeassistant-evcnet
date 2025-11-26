@@ -12,3 +12,43 @@ start_charging:
       required: false
       selector:
         text:
+
+soft_reset:
+  name: Soft reset
+  description: Perform a soft reset on the charging station
+  target:
+    entity:
+      domain: switch
+      integration: evcnet
+
+hard_reset:
+  name: Hard reset
+  description: Perform a hard reset on the charging station
+  target:
+    entity:
+      domain: switch
+      integration: evcnet
+
+unlock_connector:
+  name: Unlock connector
+  description: Unlock the connector on the charging station
+  target:
+    entity:
+      domain: switch
+      integration: evcnet
+
+block:
+  name: Block
+  description: Block the charging station from use
+  target:
+    entity:
+      domain: switch
+      integration: evcnet
+
+unblock:
+  name: Unblock
+  description: Unblock the charging station for use
+  target:
+    entity:
+      domain: switch
+      integration: evcnet

@@ -253,3 +253,88 @@ class EvcNetApiClient:
         }
 
         return await self._make_ajax_request(requests_payload)
+
+    async def soft_reset(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
+        """Perform a soft reset on a charging station."""
+        requests_payload = {
+            "0": {
+                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
+                "method": "action",
+                "params": {
+                    "action": "SoftReset",
+                    "rechargeSpotId": recharge_spot_id,
+                    "clickedButtonId": 0,
+                    "channel": channel
+                }
+            }
+        }
+
+        return await self._make_ajax_request(requests_payload)
+
+    async def hard_reset(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
+        """Perform a hard reset on a charging station."""
+        requests_payload = {
+            "0": {
+                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
+                "method": "action",
+                "params": {
+                    "action": "HardReset",
+                    "rechargeSpotId": recharge_spot_id,
+                    "clickedButtonId": 0,
+                    "channel": channel
+                }
+            }
+        }
+
+        return await self._make_ajax_request(requests_payload)
+
+    async def unlock_connector(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
+        """Unlock the connector on a charging station."""
+        requests_payload = {
+            "0": {
+                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
+                "method": "action",
+                "params": {
+                    "action": "UnlockConnector",
+                    "rechargeSpotId": recharge_spot_id,
+                    "clickedButtonId": 0,
+                    "channel": channel
+                }
+            }
+        }
+
+        return await self._make_ajax_request(requests_payload)
+
+    async def block(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
+        """Block a charging station."""
+        requests_payload = {
+            "0": {
+                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
+                "method": "action",
+                "params": {
+                    "action": "Block",
+                    "rechargeSpotId": recharge_spot_id,
+                    "clickedButtonId": 0,
+                    "channel": channel
+                }
+            }
+        }
+
+        return await self._make_ajax_request(requests_payload)
+
+    async def unblock(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
+        """Unblock a charging station."""
+        requests_payload = {
+            "0": {
+                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
+                "method": "action",
+                "params": {
+                    "action": "Unblock",
+                    "rechargeSpotId": recharge_spot_id,
+                    "clickedButtonId": 0,
+                    "channel": channel
+                }
+            }
+        }
+
+        return await self._make_ajax_request(requests_payload)
