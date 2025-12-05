@@ -22,6 +22,7 @@ class EvcNetApiClient:
         self.session = session
         self._is_authenticated = False
         self._phpsessid = None
+        self._serverid = None
 
     async def authenticate(self) -> bool:
         """Authenticate with the EVC-net API."""
@@ -43,32 +44,16 @@ class EvcNetApiClient:
 
                 # Login returns 302 redirect
                 if response.status == 302:
-                    # Try multiple methods to get the PHPSESSID
-
-                    # Method 1: From Set-Cookie header
-                    set_cookie = response.headers.get('Set-Cookie') or response.headers.get('set-cookie', '')
-                    _LOGGER.debug("Set-Cookie header: %s", set_cookie)
-
-                    if 'PHPSESSID=' in set_cookie:
-                        # Extract PHPSESSID value - format is: PHPSESSID=value; other=params
-                        cookie_part = set_cookie.split('PHPSESSID=')[1]
-                        # Get just the value before the first semicolon
-                        self._phpsessid = cookie_part.split(';')[0].strip()
-
-                    # Method 2: From cookie jar (if session has cookie support)
-                    if not self._phpsessid and hasattr(self.session, 'cookie_jar'):
+                    # Only method that works with multiple cookies: From cookie jar (HASS session has cookie support)
+                    if hasattr(self.session, 'cookie_jar'):
                         cookies = self.session.cookie_jar.filter_cookies(self.base_url)
                         for cookie in cookies.values():
                             if cookie.key == 'PHPSESSID':
                                 self._phpsessid = cookie.value
                                 _LOGGER.debug("Found PHPSESSID in cookie jar")
-                                break
-
-                    # Method 3: From response.cookies (aiohttp's built-in)
-                    if not self._phpsessid and hasattr(response, 'cookies'):
-                        if 'PHPSESSID' in response.cookies:
-                            self._phpsessid = response.cookies['PHPSESSID'].value
-                            _LOGGER.debug("Found PHPSESSID in response.cookies")
+                            if cookie.key == 'SERVERID':
+                                self._serverid = cookie.value
+                                _LOGGER.debug("Found SERVERID in cookie jar")
 
                     if self._phpsessid:
                         self._is_authenticated = True
@@ -101,8 +86,12 @@ class EvcNetApiClient:
 
         # Prepare headers with cookie
         headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Cookie": f"PHPSESSID={self._phpsessid}"
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        cookies = {
+            "PHPSESSID": self._phpsessid,
+            "SERVERID": self._serverid if self._serverid else ""
         }
 
         # Convert requests payload to JSON string and send as form data
@@ -112,7 +101,7 @@ class EvcNetApiClient:
 
         try:
             # Make request with explicit cookie header
-            async with self.session.post(url, headers=headers, data=data) as response:
+            async with self.session.post(url, headers=headers, cookies=cookies, data=data) as response:
                 # Check content type before trying to parse JSON
                 content_type = response.headers.get('Content-Type', '')
 
