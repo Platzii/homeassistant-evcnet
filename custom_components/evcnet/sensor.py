@@ -54,6 +54,50 @@ def get_nested_value(data: dict, *keys: str, default: Any = None) -> Any:
     return current if current is not None else default
 
 
+def parse_locale_number(value: Any, default: float = 0.0) -> float:
+    """Parse a number from a string, handling locale-specific formatting.
+
+    Handles both comma and point as decimal separators (e.g., '1,888' or '1.888').
+    Assumes that '.' or ',' is always a decimal separator, not a thousands separator.
+    """
+    if value is None:
+        return default
+
+    # If already a number, return it
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    # If not a string, try to convert
+    if not isinstance(value, str):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    # Remove whitespace
+    value = value.strip()
+    if not value:
+        return default
+
+    try:
+        # Try direct conversion first (handles standard format with point as decimal)
+        return float(value)
+    except ValueError:
+        pass
+
+    # Handle locale-specific formatting
+    # Both comma and point are treated as decimal separators
+    if ',' in value:
+        # Comma is decimal separator (e.g., '1,888' -> 1.888)
+        value = value.replace(',', '.')
+
+    try:
+        return float(value)
+    except ValueError as err:
+        _LOGGER.warning("Error parsing number '%s': %s", value, err)
+        return default
+
+
 def convert_time_to_decimal_hours(time_str: str) -> float:
     """Convert HH:MM time format to decimal hours (e.g., 2:30 -> 2.5)."""
     if not time_str or not isinstance(time_str, str):
@@ -73,6 +117,48 @@ def convert_time_to_decimal_hours(time_str: str) -> float:
     except (ValueError, TypeError) as err:
         _LOGGER.warning("Error converting time '%s' to decimal hours: %s", time_str, err)
         return 0.0
+
+
+def convert_energy_to_kwh(value: float, unit: str) -> float:
+    """Convert energy value from various units to kWh.
+
+    Supports: Wh, kWh, MWh, GWh (case-insensitive).
+    Returns the value in kWh.
+    """
+    unit_upper = unit.strip().upper()
+
+    # Conversion factors to kWh
+    conversion_factors = {
+        "WH": 0.001,      # 1 Wh = 0.001 kWh
+        "KWH": 1.0,       # 1 kWh = 1 kWh
+        "MWH": 1000.0,    # 1 MWh = 1000 kWh
+        "GWH": 1000000.0, # 1 GWh = 1000000 kWh
+    }
+
+    factor = conversion_factors.get(unit_upper, 1.0)
+    if unit_upper not in conversion_factors:
+        _LOGGER.warning("Unknown energy unit '%s', assuming kWh", unit)
+
+    try:
+        return float(value) * factor
+    except (ValueError, TypeError) as err:
+        _LOGGER.warning("Error converting energy value '%s' with unit '%s': %s", value, unit, err)
+        return 0.0
+
+
+def get_total_energy_usage_kwh(data: dict) -> float:
+    """Extract total energy usage and convert to kWh, handling dynamic units."""
+    number = get_nested_value(data, "total_energy_usage", 0, "number", default=0)
+    unit = get_nested_value(data, "total_energy_usage", 0, "unit", default="kWh")
+
+    # Parse the number if it's a string
+    if isinstance(number, str):
+        number = parse_locale_number(number, default=0.0)
+    elif not isinstance(number, (int, float)):
+        number = 0.0
+
+    # Convert to kWh
+    return convert_energy_to_kwh(number, unit)
 
 
 SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
@@ -110,9 +196,7 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:flash",
-        value_fn=lambda data: (
-            get_nested_value(data, "total_energy_usage", 0, "number", default=0)
-        ),
+        value_fn=get_total_energy_usage_kwh,
     ),
     EvcNetSensorEntityDescription(
         key="session_energy",
@@ -213,6 +297,16 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
                 # Filter out empty strings
                 if value == "":
                     return None
+
+                # Parse locale-aware numbers for numeric sensors
+                # Sensors with device_class and state_class expect numeric values
+                if (self.entity_description.device_class is not None and
+                    self.entity_description.state_class is not None and
+                    isinstance(value, str)):
+                    # This is a numeric sensor with a string value, parse it
+                    parsed_value = parse_locale_number(value, default=0.0)
+                    return parsed_value
+
                 return value
             except (KeyError, TypeError, AttributeError) as err:
                 _LOGGER.debug(
