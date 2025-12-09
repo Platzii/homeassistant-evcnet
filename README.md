@@ -12,6 +12,7 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 
 - **Sensors**: Monitor charging status, power consumption, and energy usage
 - **Switch**: Start and stop charging sessions
+- **Buttons**: Control charging station operations (soft/hard reset, unlock connector, block/unblock)
 - **Real-time updates**: Automatic polling every 30 seconds
 - **Action call**: Start a charging session using an action (allows to define a specific RFID card)
 
@@ -86,6 +87,13 @@ For each charging station, the integration creates:
 
 ### Switch
 - **Charging**: Turn on to start charging, off to stop
+
+### Buttons
+- **Soft Reset**: Perform a soft reset on the charging station
+- **Hard Reset**: Perform a hard reset on the charging station
+- **Unlock Connector**: Unlock the connector on the charging station
+- **Block**: Block the charging station from use
+- **Unblock**: Unblock the charging station to allow use
 
 ## Using Multiple RFID Cards
 
