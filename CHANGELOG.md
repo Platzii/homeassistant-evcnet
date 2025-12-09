@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2025-12-10
+
+### Fixed
+- Locale-aware parsing of total_energy_usage with proper unit conversion
+- Add CONFIG_SCHEMA to satisfy hassfest validation
+
 ## [0.2.0] - 2025-12-09
 
 ### Added
