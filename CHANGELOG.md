@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2025-12-09
+
+### Added
+- Button entities for charging spot control: soft & hard reset, unlock connector, block & unblock (#8, @nikagl)
+
+### Fixed
+- Respect SERVERID cookie from evcnet to maintain session persistence after Home Assistant restart (#11, @fredericvl)
+
 ## [0.1.0] - 2025-11-13
 
 ### Added
