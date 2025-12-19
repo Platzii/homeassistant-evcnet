@@ -63,7 +63,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
             coordinator = hass.data[DOMAIN][config_entry_id]
 
-            # Extract spot_id and channel from unique_id (format: {spot_id}_ch{channel}_charging)
+            # Extract spot_id from unique_id (format: {spot_id}_charging)
             unique_id = entity_entry.unique_id
             if not unique_id or not unique_id.endswith("_charging"):
                 _LOGGER.debug("Skipping entity %s (not a charging switch): %s", entity_id, unique_id)
@@ -113,23 +113,18 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
             coordinator = hass.data[DOMAIN][config_entry_id]
 
-            # Extract spot_id and channel from unique_id (format: {spot_id}_ch{channel}_charging)
+            # Extract spot_id from unique_id (format: {spot_id}_charging)
             unique_id = entity_entry.unique_id
             if not unique_id or not unique_id.endswith("_charging"):
                 _LOGGER.debug("Skipping entity %s (not a charging switch): %s", entity_id, unique_id)
                 continue
-            # Parse spot_id and channel from unique_id
-            # Expected formats: {spot_id}_ch{channel}_charging
-            base = unique_id[:-len("_charging")]
-            if "_ch" in base:
-                spot_id, ch_part = base.split("_ch", 1)
-                channel = ch_part
-            else:
-                spot_id = base
-                # Fallback to spot-level info
-                spot_data = coordinator.data.get(spot_id, {})
-                spot_info = spot_data.get("info", {})
-                channel = str(spot_info.get("CHANNEL", "1"))
+
+            spot_id = unique_id.replace("_charging", "")
+
+            # Get channel from coordinator data
+            spot_data = coordinator.data.get(spot_id, {})
+            spot_info = spot_data.get("info", {})
+            channel = str(spot_info.get("CHANNEL", "1"))
 
             try:
                 _LOGGER.info("Performing %s on spot %s, channel %s", action_name, spot_id, channel)

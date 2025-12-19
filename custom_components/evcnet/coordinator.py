@@ -59,13 +59,12 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 spot_id = spot.get("IDX")
                 if spot_id:
                     try:
-                        # Get status overview for the spot
+                        channel = str(spot.get("CHANNEL", "1"))
+                        # Get status
                         status = await self.client.get_spot_overview(str(spot_id))
                         total_energy_usage = await self.client.get_spot_total_energy_usage(str(spot_id))
                         try:
-                            # Attempt to fetch log for the first detected channel below; fallback to CHANNEL in info
-                            fallback_channel = str(spot.get("CHANNEL", "1"))
-                            log_data = await self.client.get_spot_log(str(spot_id), fallback_channel)
+                            log_data = await self.client.get_spot_log(str(spot_id), channel)
                         except Exception as log_err:
                             _LOGGER.debug(
                                 "Failed to fetch log for spot %s: %s (continuing without log)",
@@ -78,46 +77,11 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _LOGGER.debug("Total energy usage for spot %s: %s", spot_id, total_energy_usage)
                         _LOGGER.debug("Log data for spot %s: %s", spot_id, log_data)
 
-                        # Derive per-channel status mapping if multiple channels exist
-                        channels: list[str] = []
-                        channel_status: dict[str, Any] = {}
-
-                        if isinstance(status, list) and status and isinstance(status[0], list):
-                            for item in status[0]:
-                                if isinstance(item, dict):
-                                    ch = item.get("CHANNEL")
-                                    if ch is not None:
-                                        ch_str = str(ch)
-                                        channel_status[ch_str] = item
-                                        if ch_str not in channels:
-                                            channels.append(ch_str)
-
-                        # Fallback: derive channels from spot info
-                        if not channels:
-                            ch_info = spot.get("CHANNEL")
-                            if isinstance(ch_info, list):
-                                channels = [str(c) for c in ch_info]
-                            elif isinstance(ch_info, str):
-                                # Split common delimiters
-                                for sep in [",", ";", "|", "/"]:
-                                    if sep in ch_info:
-                                        channels = [s.strip() for s in ch_info.split(sep) if s.strip()]
-                                        break
-                                if not channels:
-                                    channels = [ch_info]
-                            elif ch_info is not None:
-                                channels = [str(ch_info)]
-
-                        if not channels:
-                            channels = ["1"]
-
                         data[spot_id] = {
                             "info": spot,
                             "status": status,
                             "total_energy_usage": total_energy_usage,
                             "log": log_data,
-                            "channels": channels,
-                            "channel_status": channel_status,
                         }
                     except Exception as err:
                         _LOGGER.debug(

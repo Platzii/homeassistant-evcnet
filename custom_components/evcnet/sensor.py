@@ -364,65 +364,16 @@ async def async_setup_entry(
     """Set up EVC-net sensors."""
     coordinator: EvcNetCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities: list[SensorEntity] = []
-    for spot_id, spot_data in coordinator.data.items():
-        # Spot-level sensors
+    entities = []
+    for spot_id in coordinator.data:
         for description in SENSOR_TYPES:
-            entities.append(EvcNetSensor(coordinator, description, spot_id))
-
-        # Channel-level sensors for per-plug metrics
-        channels = spot_data.get("channels") or ["1"]
-        for channel in channels:
-            entities.extend([
-                EvcNetChannelSensor(
+            entities.append(
+                EvcNetSensor(
                     coordinator,
+                    description,
                     spot_id,
-                    str(channel),
-                    "channel_current_power",
-                    "Current Power (Ch)",
-                    SensorDeviceClass.POWER,
-                    UnitOfPower.KILO_WATT,
-                    SensorStateClass.MEASUREMENT,
-                    "MOM_POWER_KW",
-                    "mdi:lightning-bolt",
-                ),
-                EvcNetChannelSensor(
-                    coordinator,
-                    spot_id,
-                    str(channel),
-                    "channel_session_energy",
-                    "Session Energy (Ch)",
-                    SensorDeviceClass.ENERGY,
-                    UnitOfEnergy.KILO_WATT_HOUR,
-                    SensorStateClass.TOTAL,
-                    "TRANS_ENERGY_DELIVERED_KWH",
-                    "mdi:battery-charging",
-                ),
-                EvcNetChannelSensor(
-                    coordinator,
-                    spot_id,
-                    str(channel),
-                    "channel_session_time",
-                    "Session Time (Ch)",
-                    SensorDeviceClass.DURATION,
-                    UnitOfTime.HOURS,
-                    None,
-                    "TRANSACTION_TIME_H_M",
-                    "mdi:timer",
-                ),
-                EvcNetChannelSensor(
-                    coordinator,
-                    spot_id,
-                    str(channel),
-                    "channel_status",
-                    "Status (Ch)",
-                    None,
-                    None,
-                    None,
-                    "STATUS",
-                    "mdi:information",
-                ),
-            ])
+                )
+            )
 
     async_add_entities(entities)
 
@@ -566,93 +517,3 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
             rows.append(row)
 
         return "\n".join(rows)
-
-
-class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
-    """Per-channel sensor for EVC-net charging spot."""
-
-    def __init__(
-        self,
-        coordinator: EvcNetCoordinator,
-        spot_id: str,
-        channel: str,
-        key: str,
-        name_suffix: str,
-        device_class: SensorDeviceClass | None,
-        unit: str | None,
-        state_class: SensorStateClass | None,
-        status_field: str,
-        icon: str,
-    ) -> None:
-        super().__init__(coordinator)
-        self._spot_id = spot_id
-        self._channel = str(channel)
-        self._status_field = status_field
-        self._attr_unique_id = f"{spot_id}_ch{self._channel}_{key}"
-        self._attr_icon = icon
-        self._attr_device_class = device_class
-        self._attr_native_unit_of_measurement = unit
-        self._attr_state_class = state_class
-
-        # Get spot info for naming and device info
-        spot_info = coordinator.data.get(spot_id, {}).get("info", {})
-        spot_name = spot_info.get("NAME") or f"Charge Spot {spot_id}"
-        self._attr_name = f"{spot_name} {name_suffix} {self._channel}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, spot_id)},
-            "name": spot_name,
-            "manufacturer": "Last Mile Solutions",
-            "model": "EVC-net Charging Station",
-            "sw_version": spot_info.get("SOFTWARE_VERSION"),
-        }
-
-    def _get_status_info_for_channel(self, status: list) -> dict[str, Any] | None:
-        if isinstance(status, list) and status and isinstance(status[0], list):
-            for item in status[0]:
-                if isinstance(item, dict) and str(item.get("CHANNEL")) == self._channel:
-                    return item
-            first = status[0][0]
-            return first if isinstance(first, dict) else None
-        return None
-
-    @property
-    def native_value(self) -> Any:
-        spot_data = self.coordinator.data.get(self._spot_id, {})
-        status = spot_data.get("status", [])
-        info = self._get_status_info_for_channel(status) or {}
-        value = info.get(self._status_field)
-
-        # Convert time to decimal hours when needed
-        if self._status_field == "TRANSACTION_TIME_H_M" and isinstance(value, str):
-            return convert_time_to_decimal_hours(value)
-
-        # Parse locale-aware numbers for numeric sensors
-        if self._attr_device_class is not None and self._attr_state_class is not None and isinstance(value, str):
-            return parse_locale_number(value, default=0.0)
-
-        return value
-
-    @property
-    def available(self) -> bool:
-        return self._spot_id in self.coordinator.data
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        spot_data = self.coordinator.data.get(self._spot_id, {})
-        status = spot_data.get("status", [])
-        info = self._get_status_info_for_channel(status) or {}
-
-        attrs = {
-            "spot_id": self._spot_id,
-            "channel": self._channel,
-        }
-        if self._status_field == "STATUS":
-            attrs["status"] = info.get("STATUS")
-        elif self._status_field == "MOM_POWER_KW":
-            attrs["power_kw"] = info.get("MOM_POWER_KW")
-        elif self._status_field == "TRANS_ENERGY_DELIVERED_KWH":
-            attrs["transaction_energy_kwh"] = info.get("TRANS_ENERGY_DELIVERED_KWH")
-        elif self._status_field == "TRANSACTION_TIME_H_M":
-            attrs["transaction_time"] = info.get("TRANSACTION_TIME_H_M")
-
-        return {k: v for k, v in attrs.items() if v is not None}

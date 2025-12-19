@@ -25,17 +25,15 @@ async def async_setup_entry(
 
     entities = []
 
-    for spot_id, spot_data in coordinator.data.items():
-        channels = spot_data.get("channels") or ["1"]
-        for channel in channels:
-            # Add button entities for each charging spot channel
-            entities.extend([
-                EvcNetSoftResetButton(coordinator, spot_id, channel),
-                EvcNetHardResetButton(coordinator, spot_id, channel),
-                EvcNetUnlockConnectorButton(coordinator, spot_id, channel),
-                EvcNetBlockButton(coordinator, spot_id, channel),
-                EvcNetUnblockButton(coordinator, spot_id, channel),
-            ])
+    for spot_id in coordinator.data:
+        # Add button entities for each charging spot
+        entities.extend([
+            EvcNetSoftResetButton(coordinator, spot_id),
+            EvcNetHardResetButton(coordinator, spot_id),
+            EvcNetUnlockConnectorButton(coordinator, spot_id),
+            EvcNetBlockButton(coordinator, spot_id),
+            EvcNetUnblockButton(coordinator, spot_id),
+        ])
 
     async_add_entities(entities)
 
@@ -47,7 +45,6 @@ class EvcNetButtonBase(CoordinatorEntity[EvcNetCoordinator], ButtonEntity):
         self,
         coordinator: EvcNetCoordinator,
         spot_id: str,
-        channel: str,
         button_type: str,
         name_suffix: str,
         icon: str,
@@ -55,9 +52,8 @@ class EvcNetButtonBase(CoordinatorEntity[EvcNetCoordinator], ButtonEntity):
         """Initialize the button."""
         super().__init__(coordinator)
         self._spot_id = spot_id
-        self._channel = str(channel)
         self._button_type = button_type
-        self._attr_unique_id = f"{spot_id}_ch{self._channel}_{button_type}"
+        self._attr_unique_id = f"{spot_id}_{button_type}"
         self._attr_icon = icon
 
         # Get spot info from coordinator data
@@ -68,7 +64,7 @@ class EvcNetButtonBase(CoordinatorEntity[EvcNetCoordinator], ButtonEntity):
         if not spot_name or spot_name.strip() == "":
             spot_name = f"Charge Spot {spot_id}"
 
-        self._attr_name = f"{spot_name} {name_suffix} Ch {self._channel}"
+        self._attr_name = f"{spot_name} {name_suffix}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, spot_id)},
             "name": spot_name,
@@ -85,14 +81,18 @@ class EvcNetButtonBase(CoordinatorEntity[EvcNetCoordinator], ButtonEntity):
     async def _execute_action(self, action_method) -> None:
         """Execute the button action."""
         try:
+            spot_data = self.coordinator.data.get(self._spot_id, {})
+            spot_info = spot_data.get("info", {})
+            channel = str(spot_info.get("CHANNEL", "1"))
+
             _LOGGER.info(
                 "Executing %s on spot %s, channel %s",
                 self._button_type,
                 self._spot_id,
-                self._channel
+                channel
             )
 
-            await action_method(self._spot_id, self._channel)
+            await action_method(self._spot_id, channel)
 
             # Wait for the action to take effect
             await asyncio.sleep(3)
@@ -109,12 +109,11 @@ class EvcNetButtonBase(CoordinatorEntity[EvcNetCoordinator], ButtonEntity):
 class EvcNetSoftResetButton(EvcNetButtonBase):
     """Button to perform a soft reset on the charging station."""
 
-    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str, channel: str) -> None:
+    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str) -> None:
         """Initialize the soft reset button."""
         super().__init__(
             coordinator,
             spot_id,
-            channel,
             "soft_reset",
             "Soft Reset",
             "mdi:restart"
@@ -128,12 +127,11 @@ class EvcNetSoftResetButton(EvcNetButtonBase):
 class EvcNetHardResetButton(EvcNetButtonBase):
     """Button to perform a hard reset on the charging station."""
 
-    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str, channel: str) -> None:
+    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str) -> None:
         """Initialize the hard reset button."""
         super().__init__(
             coordinator,
             spot_id,
-            channel,
             "hard_reset",
             "Hard Reset",
             "mdi:restart-alert"
@@ -147,12 +145,11 @@ class EvcNetHardResetButton(EvcNetButtonBase):
 class EvcNetUnlockConnectorButton(EvcNetButtonBase):
     """Button to unlock the connector on the charging station."""
 
-    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str, channel: str) -> None:
+    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str) -> None:
         """Initialize the unlock connector button."""
         super().__init__(
             coordinator,
             spot_id,
-            channel,
             "unlock_connector",
             "Unlock Connector",
             "mdi:lock-open-variant"
@@ -166,12 +163,11 @@ class EvcNetUnlockConnectorButton(EvcNetButtonBase):
 class EvcNetBlockButton(EvcNetButtonBase):
     """Button to block the charging station."""
 
-    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str, channel: str) -> None:
+    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str) -> None:
         """Initialize the block button."""
         super().__init__(
             coordinator,
             spot_id,
-            channel,
             "block",
             "Block",
             "mdi:cancel"
@@ -185,12 +181,11 @@ class EvcNetBlockButton(EvcNetButtonBase):
 class EvcNetUnblockButton(EvcNetButtonBase):
     """Button to unblock the charging station."""
 
-    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str, channel: str) -> None:
+    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str) -> None:
         """Initialize the unblock button."""
         super().__init__(
             coordinator,
             spot_id,
-            channel,
             "unblock",
             "Unblock",
             "mdi:check-circle"

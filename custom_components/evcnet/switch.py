@@ -28,14 +28,12 @@ async def async_setup_entry(
     if not hasattr(coordinator, "entities"):
         coordinator.entities = {}
 
-    for spot_id, spot_data in coordinator.data.items():
-        channels = spot_data.get("channels") or ["1"]
-        for channel in channels:
-            switch_entity = EvcNetChargingSwitch(coordinator, spot_id, channel, entry)
-            entities.append(switch_entity)
+    for spot_id in coordinator.data:
+        switch_entity = EvcNetChargingSwitch(coordinator, spot_id, entry)
+        entities.append(switch_entity)
 
-            # Store entity reference by unique_id for action access
-            coordinator.entities[switch_entity._attr_unique_id] = switch_entity
+        # Store entity reference by unique_id for action access
+        coordinator.entities[switch_entity._attr_unique_id] = switch_entity
 
     async_add_entities(entities)
 
@@ -49,15 +47,13 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         self,
         coordinator: EvcNetCoordinator,
         spot_id: str,
-        channel: str,
         entry: ConfigEntry,
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator)
         self._spot_id = spot_id
-        self._channel = str(channel)
         self._entry = entry
-        self._attr_unique_id = f"{spot_id}_ch{self._channel}_charging"
+        self._attr_unique_id = f"{spot_id}_charging"
 
         # Get spot info from coordinator data
         spot_info = coordinator.data.get(spot_id, {}).get("info", {})
@@ -67,7 +63,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         if not spot_name or spot_name.strip() == "":
             spot_name = f"Charge Spot {spot_id}"
 
-        self._attr_name = f"{spot_name} Charging Ch {self._channel}"
+        self._attr_name = f"{spot_name} Charging"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, spot_id)},
             "name": spot_name,
@@ -100,7 +96,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         status = spot_data.get("status", [])
 
         if self._is_valid_status_data(status):
-            status_info = self._get_status_info_for_channel(status) or {}
+            status_info = status[0][0]
 
             # Only auto-detect if not already set from config
             if not self._card_id and "CARDID" in status_info and status_info["CARDID"]:
@@ -142,17 +138,6 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         """Check if charging is currently active."""
         return bool(status2 & CHARGESPOT_STATUS2_FLAGS["OCCUPIED"])
 
-    def _get_status_info_for_channel(self, status: list) -> dict[str, Any] | None:
-        """Return status info dict for this entity's channel."""
-        if (isinstance(status, list) and status and isinstance(status[0], list)):
-            for item in status[0]:
-                if isinstance(item, dict) and str(item.get("CHANNEL")) == self._channel:
-                    return item
-            # Fallback to first item
-            first = status[0][0]
-            return first if isinstance(first, dict) else None
-        return None
-
     @property
     def is_on(self) -> bool:
         """Return true if charging is active."""
@@ -166,7 +151,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         if not self._is_valid_status_data(status):
             return False
 
-        status_info = self._get_status_info_for_channel(status) or {}
+        status_info = status[0][0]
         status_value = status_info.get("STATUS")
 
         if status_value is None:
@@ -207,10 +192,15 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             # Use empty string for customer_id if None (the API seems to accept this)
             customer_id = str(self._customer_id) if self._customer_id else ""
 
+            # Get the channel number from spot info
+            spot_data = self.coordinator.data.get(self._spot_id, {})
+            spot_info = spot_data.get("info", {})
+            channel = str(spot_info.get("CHANNEL", "1"))
+
             _LOGGER.info(
                 "Starting charging for spot %s on channel %s with card %s (customer: %s)",
                 self._spot_id,
-                self._channel,
+                channel,
                 card_id,
                 customer_id or "none"
             )
@@ -219,7 +209,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
                 self._spot_id,
                 customer_id,
                 card_id,
-                self._channel
+                channel
             )
 
             # Wait a bit for the charging station to process the command
@@ -244,9 +234,15 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop charging."""
         try:
-            _LOGGER.info("Stopping charging for spot %s on channel %s", self._spot_id, self._channel)
+            spot_data = self.coordinator.data.get(self._spot_id, {})
+            spot_info = spot_data.get("info", {})
 
-            await self.coordinator.client.stop_charging(self._spot_id, self._channel)
+            # Get the channel number from spot info
+            channel = str(spot_info.get("CHANNEL", "1"))
+
+            _LOGGER.info("Stopping charging for spot %s on channel %s", self._spot_id, channel)
+
+            await self.coordinator.client.stop_charging(self._spot_id, channel)
 
             # Wait a bit for the charging station to process the command
             # before refreshing the status
@@ -274,9 +270,9 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
         # Try to get more details from status
         status = spot_data.get("status", [])
-        status_info: dict[str, Any] = {}
+        status_info = {}
         if self._is_valid_status_data(status):
-            status_info = self._get_status_info_for_channel(status) or {}
+            status_info = status[0][0]
 
         attributes = {
             "spot_id": self._spot_id,
@@ -286,7 +282,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             "transaction_time": status_info.get("TRANSACTION_TIME_H_M"),
             "customer_id": self._customer_id,
             "card_id": self._card_id,
-            "channel": self._channel,
+            "channel": status_info.get("CHANNEL"),
         }
 
         # Remove None values
