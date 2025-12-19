@@ -59,17 +59,29 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 spot_id = spot.get("IDX")
                 if spot_id:
                     try:
+                        channel = str(spot.get("CHANNEL", "1"))
                         # Get status
                         status = await self.client.get_spot_overview(str(spot_id))
                         total_energy_usage = await self.client.get_spot_total_energy_usage(str(spot_id))
+                        try:
+                            log_data = await self.client.get_spot_log(str(spot_id), channel)
+                        except Exception as log_err:
+                            _LOGGER.debug(
+                                "Failed to fetch log for spot %s: %s (continuing without log)",
+                                spot_id,
+                                log_err,
+                            )
+                            log_data = self.data.get(spot_id, {}).get("log", []) if self.data else []
 
                         _LOGGER.debug("Status for spot %s: %s", spot_id, status)
                         _LOGGER.debug("Total energy usage for spot %s: %s", spot_id, total_energy_usage)
+                        _LOGGER.debug("Log data for spot %s: %s", spot_id, log_data)
 
                         data[spot_id] = {
                             "info": spot,
                             "status": status,
                             "total_energy_usage": total_energy_usage,
+                            "log": log_data,
                         }
                     except Exception as err:
                         _LOGGER.debug(
@@ -84,6 +96,7 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 "info": spot,
                                 "status": [],
                                 "total_energy_usage": [],
+                                "log": [],
                             }
 
             return data

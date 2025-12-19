@@ -54,6 +54,108 @@ def get_nested_value(data: dict, *keys: str, default: Any = None) -> Any:
     return current if current is not None else default
 
 
+def extract_log_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize log data to a flat list of entries."""
+    log_data = data.get("log", [])
+
+    # Some responses use a dict with numeric keys
+    if isinstance(log_data, dict):
+        log_data = log_data.get("0", [])
+
+    if isinstance(log_data, list):
+        # The API typically returns [[{...}, {...}]]
+        if log_data and isinstance(log_data[0], list):
+            log_entries = log_data[0]
+        else:
+            log_entries = log_data
+
+        # Sanitize whitespace-heavy HTML fragments to single-line strings for editors
+        sanitized: list[dict[str, Any]] = []
+        for entry in log_entries:
+            if not isinstance(entry, dict):
+                continue
+
+            new_entry = dict(entry)
+
+            icon = new_entry.get("CARD_TYPE_ICON")
+            if isinstance(icon, str):
+                # Collapse newlines/tabs/spaces to a single space to keep JSON inline
+                new_entry["CARD_TYPE_ICON"] = " ".join(icon.split())
+
+            event_data = new_entry.get("EVENT_DATA")
+            if isinstance(event_data, str):
+                # Also normalize event data string spacing
+                new_entry["EVENT_DATA"] = " ".join(event_data.split())
+
+            sanitized.append(new_entry)
+
+        return sanitized
+
+    return []
+
+
+def latest_log_entry(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the most recent log entry if available."""
+    entries = extract_log_entries(data)
+    if entries:
+        return entries[0]
+    return None
+
+
+def summarize_log_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return simplified rows with parsed icon metadata for frontend use."""
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        icon_title = parse_card_icon_title(entry.get("CARD_TYPE_ICON"))
+        mdi_icon = map_icon_title_to_mdi(icon_title)
+        info_text = entry.get("EVENT_DATA") or ""
+        rows.append(
+            {
+                "date": entry.get("LOG_DATE"),
+                "notification": entry.get("NOTIFICATION"),
+                "power_kw": entry.get("MOM_POWER_KW"),
+                "energy_kwh": entry.get("TRANS_ENERGY_DELIVERED_KWH"),
+                "transaction_time": entry.get("TRANSACTION_TIME_H_M"),
+                "card_id": entry.get("CARDID"),
+                "client": entry.get("CUSTOMER_NAME"),
+                "details": info_text,
+                "icon_title": icon_title,
+                "mdi_icon": mdi_icon,
+            }
+        )
+    return rows
+
+
+def parse_card_icon_title(icon_html: str | None) -> str | None:
+    """Extract the title attribute (e.g., 'RFID') from the icon HTML."""
+    if not icon_html or not isinstance(icon_html, str):
+        return None
+    # Simple extraction without regex to keep dependencies minimal
+    icon_html = icon_html.replace('\"', '"')
+    marker = "title='"
+    alt_marker = 'title="'
+    if marker in icon_html:
+        start = icon_html.find(marker) + len(marker)
+        end = icon_html.find("'", start)
+        return icon_html[start:end] if end > start else None
+    if alt_marker in icon_html:
+        start = icon_html.find(alt_marker) + len(alt_marker)
+        end = icon_html.find('"', start)
+        return icon_html[start:end] if end > start else None
+    return None
+
+
+def map_icon_title_to_mdi(title: str | None) -> str | None:
+    """Map known icon titles to MDI icons usable in HA UI."""
+    if not title:
+        return None
+    title_upper = title.strip().upper()
+    mapping = {
+        "RFID": "mdi:nfc",  # Most common value seen in CARD_TYPE_ICON title
+    }
+    return mapping.get(title_upper)
+
+
 def parse_locale_number(value: Any, default: float = 0.0) -> float:
     """Parse a number from a string, handling locale-specific formatting.
 
@@ -227,6 +329,30 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
             get_nested_value(data, "info", "SOFTWARE_VERSION", default="Unknown")
         ),
     ),
+    EvcNetSensorEntityDescription(
+        key="last_log_notification",
+        name="Last Log Notification",
+        icon="mdi:history",
+        value_fn=lambda data: (
+            (entry := latest_log_entry(data)) and entry.get("NOTIFICATION")
+        ),
+    ),
+    EvcNetSensorEntityDescription(
+        key="last_log_time",
+        name="Last Log Time",
+        icon="mdi:clock-outline",
+        value_fn=lambda data: (
+            (entry := latest_log_entry(data)) and entry.get("LOG_DATE")
+        ),
+    ),
+    EvcNetSensorEntityDescription(
+        key="log_summary",
+        name="Log Summary",
+        icon="mdi:table",
+        value_fn=lambda data: (
+            len(extract_log_entries(data))
+        ),
+    ),
 )
 
 
@@ -341,5 +467,53 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
         if spot_info.get("CUSTOMER_NAME"):
             attributes["customer_name"] = spot_info.get("CUSTOMER_NAME")
 
+        # Only include log details for log sensors to avoid bloating attributes on all entities
+        if self.entity_description.key.startswith("last_log") or self.entity_description.key == "log_summary":
+            log_entries = extract_log_entries(spot_data)
+            if log_entries:
+                latest = log_entries[0]
+                attributes.update(
+                    {
+                        "log_entries": log_entries,
+                        "log_rows": summarize_log_rows(log_entries),
+                        "log_date": latest.get("LOG_DATE"),
+                        "log_notification": latest.get("NOTIFICATION"),
+                        "log_event_type": latest.get("EVENT_TYPE"),
+                        "log_event_source": latest.get("EVENT_SOURCE"),
+                        "log_status": latest.get("STATUS"),
+                        "log_power_kw": latest.get("MOM_POWER_KW"),
+                        "log_energy_kwh": latest.get("TRANS_ENERGY_DELIVERED_KWH"),
+                        "log_transaction_time": latest.get("TRANSACTION_TIME_H_M"),
+                        "log_customer_name": latest.get("CUSTOMER_NAME"),
+                        "log_card_id": latest.get("CARDID"),
+                        # Provide a readable summary table as Markdown
+                        "log_markdown": self._format_log_as_markdown(log_entries),
+                    }
+                )
+
         # Remove None values
         return {k: v for k, v in attributes.items() if v is not None}
+
+    def _format_log_as_markdown(self, entries: list[dict[str, Any]], max_rows: int = 50) -> str:
+        """Create a plain Markdown table similar to the portal view (no HTML tags)."""
+        rows: list[str] = []
+        header = "| Date | Notification | Power (kW) | Energy (kWh) | Time | Card | Client | Details |\n|---|---|---:|---:|---|---|---|---|"
+        rows.append(header)
+
+        for entry in entries[:max_rows]:
+            date = entry.get("LOG_DATE") or ""
+            note = entry.get("NOTIFICATION") or ""
+            power = entry.get("MOM_POWER_KW")
+            energy = entry.get("TRANS_ENERGY_DELIVERED_KWH")
+            time = entry.get("TRANSACTION_TIME_H_M") or ""
+            card_id = entry.get("CARDID") or ""
+            client = entry.get("CUSTOMER_NAME") or ""
+            details = entry.get("EVENT_DATA") or ""
+
+            power_str = f"{power:.3f}" if isinstance(power, (int, float)) else (str(power) if power is not None else "")
+            energy_str = f"{energy:.3f}" if isinstance(energy, (int, float)) else (str(energy) if energy is not None else "")
+
+            row = f"| {date} | {note} | {power_str} | {energy_str} | {time} | {card_id} | {client} | {details} |"
+            rows.append(row)
+
+        return "\n".join(rows)
