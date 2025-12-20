@@ -327,3 +327,28 @@ class EvcNetApiClient:
         }
 
         return await self._make_ajax_request(requests_payload)
+
+    async def get_spot_log(
+        self,
+        recharge_spot_id: str,
+        channel: str,
+        detailed: bool = False,
+        log_id: str | None = None,
+        extend: bool = False,
+    ) -> dict[str, Any]:
+        """Retrieve the log entries for a charging station."""
+        requests_payload = {
+            "0": {
+                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
+                "method": "log",
+                "params": {
+                    "rechargeSpotId": recharge_spot_id,
+                    "channel": channel,
+                    "detailed": detailed,
+                    "id": log_id,
+                    "extend": extend,
+                },
+            }
+        }
+
+        return await self._make_ajax_request(requests_payload)

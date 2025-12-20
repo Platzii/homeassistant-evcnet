@@ -11,7 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .api import EvcNetApiClient
-from .const import CONF_BASE_URL, DOMAIN
+from .const import CONF_BASE_URL, DOMAIN, CONF_MAX_CHANNELS
 from .coordinator import EvcNetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -113,18 +113,25 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
             coordinator = hass.data[DOMAIN][config_entry_id]
 
-            # Extract spot_id from unique_id (format: {spot_id}_charging)
+            # Determine spot and channel from the stored entity reference
             unique_id = entity_entry.unique_id
-            if not unique_id or not unique_id.endswith("_charging"):
-                _LOGGER.debug("Skipping entity %s (not a charging switch): %s", entity_id, unique_id)
+            entities_dict = getattr(coordinator, "entities", {})
+            switch_entity = entities_dict.get(unique_id)
+
+            if not switch_entity:
+                _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
                 continue
 
-            spot_id = unique_id.replace("_charging", "")
+            spot_id = getattr(switch_entity, "_spot_id", None)
+            if spot_id is None:
+                _LOGGER.error("Switch entity missing spot_id: %s", unique_id)
+                continue
 
-            # Get channel from coordinator data
+            # Prefer the entity's channel override when present; fallback to spot info
             spot_data = coordinator.data.get(spot_id, {})
             spot_info = spot_data.get("info", {})
-            channel = str(spot_info.get("CHANNEL", "1"))
+            channel_override = getattr(switch_entity, "_channel_override", None)
+            channel = str(channel_override or spot_info.get("CHANNEL", "1"))
 
             try:
                 _LOGGER.info("Performing %s on spot %s, channel %s", action_name, spot_id, channel)
@@ -216,7 +223,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session,
     )
 
-    coordinator = EvcNetCoordinator(hass, client)
+    # Read max channels from options; default to 1
+    max_channels = int(entry.options.get(CONF_MAX_CHANNELS, 1))
+    coordinator = EvcNetCoordinator(hass, client, max_channels=max_channels)
 
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()

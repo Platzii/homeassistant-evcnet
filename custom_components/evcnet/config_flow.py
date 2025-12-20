@@ -12,7 +12,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import EvcNetApiClient
-from .const import CONF_BASE_URL, DEFAULT_BASE_URL, DOMAIN
+from .const import CONF_BASE_URL, DEFAULT_BASE_URL, DOMAIN, CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -232,6 +232,7 @@ class EvcNetOptionsFlowHandler(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         # Create options schema with current values
+        current_options = dict(self.config_entry.options)
         options_schema = vol.Schema(
             {
                 vol.Optional(
@@ -244,6 +245,11 @@ class EvcNetOptionsFlowHandler(config_entries.OptionsFlow):
                     default=self.config_entry.data.get(CONF_CUSTOMER_ID, ""),
                     description={"suggested_value": ""}
                 ): str,
+                vol.Optional(
+                    CONF_MAX_CHANNELS,
+                    default=current_options.get(CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS),
+                    description={"suggested_value": DEFAULT_MAX_CHANNELS}
+                ): vol.Coerce(int),
             }
         )
 
@@ -254,7 +260,8 @@ class EvcNetOptionsFlowHandler(config_entries.OptionsFlow):
                 "info": (
                     "Update your RFID card ID and customer ID. "
                     "These are used to start charging sessions remotely. "
-                    "Leave blank to use auto-detected values."
+                    "Leave blank to use auto-detected values. "
+                    "Set 'Max Channels' to create per-channel sensors and switches (keeps channel 1 names unchanged)."
                 )
             },
         )

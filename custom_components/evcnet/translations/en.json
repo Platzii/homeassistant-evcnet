@@ -46,7 +46,8 @@
         "description": "Update your RFID card ID and customer ID. These are used to start charging sessions remotely. Leave blank to use auto-detected values.",
         "data": {
           "card_id": "RFID Card ID",
-          "customer_id": "Customer ID (optional)"
+          "customer_id": "Customer ID (optional)",
+          "max_channels": "Maximum channels"
         }
       }
     }
