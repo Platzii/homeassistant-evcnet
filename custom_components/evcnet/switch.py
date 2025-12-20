@@ -29,11 +29,17 @@ async def async_setup_entry(
         coordinator.entities = {}
 
     for spot_id in coordinator.data:
-        switch_entity = EvcNetChargingSwitch(coordinator, spot_id, entry)
-        entities.append(switch_entity)
+        # Primary channel (1) – keep existing naming/IDs for compatibility
+        primary_switch = EvcNetChargingSwitch(coordinator, spot_id, entry, channel=1)
+        entities.append(primary_switch)
+        coordinator.entities[primary_switch._attr_unique_id] = primary_switch
 
-        # Store entity reference by unique_id for action access
-        coordinator.entities[switch_entity._attr_unique_id] = switch_entity
+        # Additional channels (2..max) – create channel-specific switches
+        per_spot_max = coordinator.spot_channels.get(str(spot_id), getattr(coordinator, "max_channels", 1))
+        for ch in range(2, per_spot_max + 1):
+            ch_switch = EvcNetChargingSwitch(coordinator, spot_id, entry, channel=ch)
+            entities.append(ch_switch)
+            coordinator.entities[ch_switch._attr_unique_id] = ch_switch
 
     async_add_entities(entities)
 
@@ -48,12 +54,18 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         coordinator: EvcNetCoordinator,
         spot_id: str,
         entry: ConfigEntry,
+        channel: int | None = None,
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator)
         self._spot_id = spot_id
         self._entry = entry
-        self._attr_unique_id = f"{spot_id}_charging"
+        self._channel_override = channel if channel and channel > 0 else None
+        # Unique ID: keep original for primary channel, add ch suffix for others
+        if self._channel_override and self._channel_override != 1:
+            self._attr_unique_id = f"{spot_id}_ch{self._channel_override}_charging"
+        else:
+            self._attr_unique_id = f"{spot_id}_charging"
 
         # Get spot info from coordinator data
         spot_info = coordinator.data.get(spot_id, {}).get("info", {})
@@ -63,7 +75,11 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         if not spot_name or spot_name.strip() == "":
             spot_name = f"Charge Spot {spot_id}"
 
-        self._attr_name = f"{spot_name} Charging"
+        # Name: keep original for primary channel, add 'Ch X' for others
+        if self._channel_override and self._channel_override != 1:
+            self._attr_name = f"{spot_name} Ch {self._channel_override} Charging"
+        else:
+            self._attr_name = f"{spot_name} Charging"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, spot_id)},
             "name": spot_name,
@@ -195,7 +211,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             # Get the channel number from spot info
             spot_data = self.coordinator.data.get(self._spot_id, {})
             spot_info = spot_data.get("info", {})
-            channel = str(spot_info.get("CHANNEL", "1"))
+            channel = str(self._channel_override or spot_info.get("CHANNEL", "1"))
 
             _LOGGER.info(
                 "Starting charging for spot %s on channel %s with card %s (customer: %s)",
@@ -236,9 +252,8 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
         try:
             spot_data = self.coordinator.data.get(self._spot_id, {})
             spot_info = spot_data.get("info", {})
-
-            # Get the channel number from spot info
-            channel = str(spot_info.get("CHANNEL", "1"))
+            # Prefer override channel
+            channel = str(self._channel_override or spot_info.get("CHANNEL", "1"))
 
             _LOGGER.info("Stopping charging for spot %s on channel %s", self._spot_id, channel)
 
@@ -282,7 +297,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             "transaction_time": status_info.get("TRANSACTION_TIME_H_M"),
             "customer_id": self._customer_id,
             "card_id": self._card_id,
-            "channel": status_info.get("CHANNEL"),
+            "channel": int(self._channel_override or status_info.get("CHANNEL") or 1),
         }
 
         # Remove None values

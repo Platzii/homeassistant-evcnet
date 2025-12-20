@@ -15,7 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching EVC-net data."""
 
-    def __init__(self, hass: HomeAssistant, client: EvcNetApiClient) -> None:
+    def __init__(self, hass: HomeAssistant, client: EvcNetApiClient, max_channels: int = 1) -> None:
         """Initialize coordinator."""
         super().__init__(
             hass,
@@ -25,6 +25,9 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.client = client
         self.charge_spots: list[dict[str, Any]] = []
+        self.max_channels = max(1, int(max_channels))
+        # Auto-detected channel count per spot_id
+        self.spot_channels: dict[str, int] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -59,19 +62,47 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 spot_id = spot.get("IDX")
                 if spot_id:
                     try:
-                        channel = str(spot.get("CHANNEL", "1"))
                         # Get status
                         status = await self.client.get_spot_overview(str(spot_id))
                         total_energy_usage = await self.client.get_spot_total_energy_usage(str(spot_id))
+                        # Determine number of channels from status payload if possible
+                        detected_channels = 1
                         try:
-                            log_data = await self.client.get_spot_log(str(spot_id), channel)
-                        except Exception as log_err:
-                            _LOGGER.debug(
-                                "Failed to fetch log for spot %s: %s (continuing without log)",
-                                spot_id,
-                                log_err,
-                            )
-                            log_data = self.data.get(spot_id, {}).get("log", []) if self.data else []
+                            if (isinstance(status, list) and len(status) > 0 and
+                                isinstance(status[0], list) and len(status[0]) > 0):
+                                detected_channels = max(1, len(status[0]))
+                        except Exception:
+                            detected_channels = 1
+
+                        # Store detected channels and compute effective max to fetch
+                        self.spot_channels[str(spot_id)] = detected_channels
+                        effective_max = max(self.max_channels, detected_channels)
+
+                        # Fetch logs per channel (1..effective_max)
+                        channels: dict[int, dict[str, Any]] = {}
+                        for ch in range(1, effective_max + 1):
+                            ch_str = str(ch)
+                            try:
+                                ch_log = await self.client.get_spot_log(str(spot_id), ch_str)
+                            except Exception as log_err:
+                                _LOGGER.debug(
+                                    "Failed to fetch log for spot %s channel %s: %s (continuing)",
+                                    spot_id,
+                                    ch_str,
+                                    log_err,
+                                )
+                                # Preserve previous channel log if available
+                                ch_log = (
+                                    self.data.get(spot_id, {})
+                                    .get("channels", {})
+                                    .get(ch, {})
+                                    .get("log", [])
+                                    if self.data else []
+                                )
+                            channels[ch] = {"log": ch_log}
+
+                        # Keep top-level 'log' for backwards compatibility (channel 1)
+                        log_data = channels.get(1, {}).get("log", [])
 
                         _LOGGER.debug("Status for spot %s: %s", spot_id, status)
                         _LOGGER.debug("Total energy usage for spot %s: %s", spot_id, total_energy_usage)
@@ -82,6 +113,7 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             "status": status,
                             "total_energy_usage": total_energy_usage,
                             "log": log_data,
+                            "channels": channels,
                         }
                     except Exception as err:
                         _LOGGER.debug(
@@ -97,6 +129,7 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 "status": [],
                                 "total_energy_usage": [],
                                 "log": [],
+                                "channels": {},
                             }
 
             return data

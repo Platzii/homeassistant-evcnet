@@ -6,10 +6,12 @@ DOMAIN = "evcnet"
 CONF_BASE_URL = "base_url"
 CONF_CARD_ID = "card_id"
 CONF_CUSTOMER_ID = "customer_id"
+CONF_MAX_CHANNELS = "max_channels"
 
 # Default values
 DEFAULT_BASE_URL = "https://50five-sbelux.evc-net.com"
 DEFAULT_SCAN_INTERVAL = 30  # seconds
+DEFAULT_MAX_CHANNELS = 1
 
 # API endpoints
 LOGIN_ENDPOINT = "/Login/Login"

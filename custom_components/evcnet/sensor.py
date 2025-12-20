@@ -366,14 +366,24 @@ async def async_setup_entry(
 
     entities = []
     for spot_id in coordinator.data:
+        # Primary channel sensors (keep original names/IDs)
         for description in SENSOR_TYPES:
-            entities.append(
-                EvcNetSensor(
-                    coordinator,
-                    description,
-                    spot_id,
+            entities.append(EvcNetSensor(coordinator, description, spot_id))
+
+        # Additional channels: create channel-specific sensors using per-channel logs
+        max_channels = (
+            coordinator.spot_channels.get(str(spot_id), getattr(coordinator, "max_channels", 1))
+        )
+        for ch in range(2, max_channels + 1):
+            for description in SENSOR_TYPES:
+                entities.append(
+                    EvcNetChannelSensor(
+                        coordinator,
+                        description,
+                        spot_id,
+                        channel=ch,
+                    )
                 )
-            )
 
     async_add_entities(entities)
 
@@ -517,3 +527,117 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
             rows.append(row)
 
         return "\n".join(rows)
+
+
+class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
+    """Representation of a channel-specific EVC-net sensor."""
+
+    entity_description: EvcNetSensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: EvcNetCoordinator,
+        description: EvcNetSensorEntityDescription,
+        spot_id: str,
+        channel: int,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._spot_id = spot_id
+        self._channel = int(channel)
+        self._attr_unique_id = f"{spot_id}_ch{self._channel}_{description.key}"
+
+        spot_info = coordinator.data.get(spot_id, {}).get("info", {})
+        spot_name = spot_info.get("NAME") or f"Charge Spot {spot_id}"
+        self._attr_name = f"{spot_name} Ch {self._channel} {description.name}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, spot_id)},
+            "name": spot_name,
+            "manufacturer": "Last Mile Solutions",
+            "model": "EVC-net Charging Station",
+            "sw_version": spot_info.get("SOFTWARE_VERSION"),
+        }
+
+    @property
+    def native_value(self) -> Any:
+        """Return the state of the channel-specific sensor."""
+        spot_data = self.coordinator.data.get(self._spot_id, {})
+        ch_data = (
+            spot_data.get("channels", {}).get(self._channel, {})
+        )
+        # For values driven by logs, use the latest log entry for this channel
+        latest = None
+        try:
+            latest = latest_log_entry(ch_data)
+        except Exception:
+            latest = None
+
+        key = self.entity_description.key
+
+        if key == "current_power":
+            val = (latest and latest.get("MOM_POWER_KW")) or 0
+            return parse_locale_number(val, default=0.0) if isinstance(val, str) else val
+        if key == "session_energy":
+            val = (latest and latest.get("TRANS_ENERGY_DELIVERED_KWH")) or 0
+            return parse_locale_number(val, default=0.0) if isinstance(val, str) else val
+        if key == "session_time":
+            return convert_time_to_decimal_hours((latest and latest.get("TRANSACTION_TIME_H_M")) or "")
+        if key == "status":
+            return (latest and latest.get("NOTIFICATION")) or None
+        if key == "status_code":
+            return (latest and latest.get("STATUS")) or None
+        if key == "last_log_notification":
+            return (latest and latest.get("NOTIFICATION")) or None
+        if key == "last_log_time":
+            return (latest and latest.get("LOG_DATE")) or None
+        if key == "log_summary":
+            return len(extract_log_entries(ch_data))
+        if key == "energy_usage":
+            # Total energy usage is spot-wide; reuse existing logic
+            return get_total_energy_usage_kwh(spot_data)
+        if key == "software_version":
+            return get_nested_value(spot_data, "info", "SOFTWARE_VERSION", default="Unknown")
+
+        # Fallback to None if not matched
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        spot_data = self.coordinator.data.get(self._spot_id, {})
+        spot_info = spot_data.get("info", {})
+        ch_data = spot_data.get("channels", {}).get(self._channel, {})
+
+        attributes = {
+            "spot_id": self._spot_id,
+            "channel": self._channel,
+            "address": spot_info.get("ADDRESS"),
+            "reference": spot_info.get("REFERENCE"),
+            "cost_center": spot_info.get("COST_CENTER_NUMBER"),
+            "network_type": spot_info.get("NETWORK_TYPE"),
+        }
+
+        # Only include log details for log sensors
+        if self.entity_description.key.startswith("last_log") or self.entity_description.key == "log_summary":
+            log_entries = extract_log_entries(ch_data)
+            if log_entries:
+                latest = log_entries[0]
+                attributes.update(
+                    {
+                        "log_entries": log_entries,
+                        "log_rows": summarize_log_rows(log_entries),
+                        "log_date": latest.get("LOG_DATE"),
+                        "log_notification": latest.get("NOTIFICATION"),
+                        "log_event_type": latest.get("EVENT_TYPE"),
+                        "log_event_source": latest.get("EVENT_SOURCE"),
+                        "log_status": latest.get("STATUS"),
+                        "log_power_kw": latest.get("MOM_POWER_KW"),
+                        "log_energy_kwh": latest.get("TRANS_ENERGY_DELIVERED_KWH"),
+                        "log_transaction_time": latest.get("TRANSACTION_TIME_H_M"),
+                        "log_customer_name": latest.get("CUSTOMER_NAME"),
+                        "log_card_id": latest.get("CARDID"),
+                        "log_markdown": self._format_log_as_markdown(log_entries),
+                    }
+                )
+
+        return {k: v for k, v in attributes.items() if v is not None}
