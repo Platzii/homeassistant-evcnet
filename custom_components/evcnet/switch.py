@@ -29,14 +29,13 @@ async def async_setup_entry(
         coordinator.entities = {}
 
     for spot_id in coordinator.data:
-        # Primary channel (1) – keep existing naming/IDs for compatibility
-        primary_switch = EvcNetChargingSwitch(coordinator, spot_id, entry, channel=1)
-        entities.append(primary_switch)
-        coordinator.entities[primary_switch._attr_unique_id] = primary_switch
-
-        # Additional channels (2..max) – create channel-specific switches
-        per_spot_max = coordinator.spot_channels.get(str(spot_id), getattr(coordinator, "max_channels", 1))
-        for ch in range(2, per_spot_max + 1):
+        # Get detected number of channels for this spot
+        detected_channels = coordinator.spot_channels.get(str(spot_id), 1)
+        # Use the larger of max_channels setting and detected channels
+        effective_max = max(getattr(coordinator, "max_channels", 1), detected_channels)
+        
+        # Create switches for all channels (1..effective_max)
+        for ch in range(1, effective_max + 1):
             ch_switch = EvcNetChargingSwitch(coordinator, spot_id, entry, channel=ch)
             entities.append(ch_switch)
             coordinator.entities[ch_switch._attr_unique_id] = ch_switch

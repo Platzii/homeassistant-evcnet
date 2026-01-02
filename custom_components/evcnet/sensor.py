@@ -366,24 +366,27 @@ async def async_setup_entry(
 
     entities = []
     for spot_id in coordinator.data:
-        # Primary channel sensors (keep original names/IDs)
-        for description in SENSOR_TYPES:
-            entities.append(EvcNetSensor(coordinator, description, spot_id))
-
-        # Additional channels: create channel-specific sensors using per-channel logs
-        max_channels = (
-            coordinator.spot_channels.get(str(spot_id), getattr(coordinator, "max_channels", 1))
-        )
-        for ch in range(2, max_channels + 1):
+        # Get detected number of channels for this spot
+        detected_channels = coordinator.spot_channels.get(str(spot_id), 1)
+        # Use the larger of max_channels setting and detected channels
+        effective_max = max(getattr(coordinator, "max_channels", 1), detected_channels)
+        
+        # If only one channel, use legacy sensors (original naming)
+        if effective_max == 1:
             for description in SENSOR_TYPES:
-                entities.append(
-                    EvcNetChannelSensor(
-                        coordinator,
-                        description,
-                        spot_id,
-                        channel=ch,
+                entities.append(EvcNetSensor(coordinator, description, spot_id))
+        else:
+            # Multiple channels: create channel-specific sensors for ALL channels (1..effective_max)
+            for ch in range(1, effective_max + 1):
+                for description in SENSOR_TYPES:
+                    entities.append(
+                        EvcNetChannelSensor(
+                            coordinator,
+                            description,
+                            spot_id,
+                            channel=ch,
+                        )
                     )
-                )
 
     async_add_entities(entities)
 

@@ -11,7 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .api import EvcNetApiClient
-from .const import CONF_BASE_URL, DOMAIN, CONF_MAX_CHANNELS
+from .const import CONF_BASE_URL, DOMAIN, CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS
 from .coordinator import EvcNetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -223,8 +223,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session,
     )
 
-    # Read max channels from options; default to 1
-    max_channels = int(entry.options.get(CONF_MAX_CHANNELS, 1))
+    # Read max channels from options; default to DEFAULT_MAX_CHANNELS
+    max_channels = int(entry.options.get(CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS))
     coordinator = EvcNetCoordinator(hass, client, max_channels=max_channels)
 
     # Fetch initial data
@@ -234,7 +234,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Listen for options updates
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
     return True
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the config entry when it's updated."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
