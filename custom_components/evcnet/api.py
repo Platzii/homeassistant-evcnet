@@ -1,6 +1,8 @@
 """API client for EVC-net charging stations."""
+import asyncio
 import json
 import logging
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -23,61 +25,107 @@ class EvcNetApiClient:
         self._is_authenticated = False
         self._phpsessid = None
         self._serverid = None
+        self._auth_lock = asyncio.Lock()  # Prevent concurrent authentication
+        self._last_auth_attempt = 0  # Track last authentication time
+        self._auth_backoff = 30  # Minimum seconds between auth attempts
 
     async def authenticate(self) -> bool:
         """Authenticate with the EVC-net API."""
-        url = f"{self.base_url}{LOGIN_ENDPOINT}"
+        # Use lock to prevent multiple concurrent authentication attempts
+        async with self._auth_lock:
+            # Check if we authenticated recently (backoff mechanism)
+            time_since_last_auth = time.time() - self._last_auth_attempt
+            if self._is_authenticated and time_since_last_auth < self._auth_backoff:
+                _LOGGER.debug(
+                    "Skipping authentication, last attempt was %.1f seconds ago",
+                    time_since_last_auth
+                )
+                return True
+            
+            self._last_auth_attempt = time.time()
+            
+            url = f"{self.base_url}{LOGIN_ENDPOINT}"
 
-        data = {
-            "emailField": self.username,
-            "passwordField": self.password,
-        }
+            data = {
+                "emailField": self.username,
+                "passwordField": self.password,
+            }
 
-        try:
-            # Don't follow redirects automatically, we need to capture cookies
-            async with self.session.post(
-                url,
-                data=data,
-                allow_redirects=False  # Don't follow redirects
-            ) as response:
-                _LOGGER.debug("Login response status: %s", response.status)
+            _LOGGER.debug("Attempting authentication to: %s", url)
+            _LOGGER.debug("Username: %s", self.username[:3] + "***" if len(self.username) > 3 else "***")
 
-                # Login returns 302 redirect
-                if response.status == 302:
-                    # Only method that works with multiple cookies: From cookie jar (HASS session has cookie support)
-                    if hasattr(self.session, 'cookie_jar'):
-                        cookies = self.session.cookie_jar.filter_cookies(self.base_url)
-                        for cookie in cookies.values():
-                            if cookie.key == 'PHPSESSID':
-                                self._phpsessid = cookie.value
-                                _LOGGER.debug("Found PHPSESSID in cookie jar")
-                            if cookie.key == 'SERVERID':
-                                self._serverid = cookie.value
-                                _LOGGER.debug("Found SERVERID in cookie jar")
+            try:
+                # Don't follow redirects automatically, we need to capture cookies
+                async with self.session.post(
+                    url,
+                    data=data,
+                    allow_redirects=False  # Don't follow redirects
+                ) as response:
+                    _LOGGER.debug("Login response status: %s", response.status)
+                    _LOGGER.debug("Login response headers: %s", dict(response.headers))
 
-                    if self._phpsessid:
-                        self._is_authenticated = True
-                        _LOGGER.info("Successfully authenticated with EVC-net")
-                        _LOGGER.debug("PHPSESSID: %s", self._phpsessid[:10] + "...")
-                        return True
+                    # Login returns 302 redirect
+                    if response.status == 302:
+                        _LOGGER.debug("Received expected 302 redirect")
+                        _LOGGER.debug("Location header: %s", response.headers.get('Location', 'Not present'))
+                        
+                        # Only method that works with multiple cookies: From cookie jar (HASS session has cookie support)
+                        if hasattr(self.session, 'cookie_jar'):
+                            cookies = self.session.cookie_jar.filter_cookies(self.base_url)
+                            _LOGGER.debug("Total cookies in jar for %s: %d", self.base_url, len(cookies))
+                            
+                            for cookie in cookies.values():
+                                _LOGGER.debug("Cookie found: %s = %s...", cookie.key, cookie.value[:10] if cookie.value else "None")
+                                if cookie.key == 'PHPSESSID':
+                                    self._phpsessid = cookie.value
+                                    _LOGGER.info("Found PHPSESSID in cookie jar: %s...", cookie.value[:10])
+                                if cookie.key == 'SERVERID':
+                                    self._serverid = cookie.value
+                                    _LOGGER.info("Found SERVERID in cookie jar: %s", cookie.value)
+                        else:
+                            _LOGGER.error("Session does not have cookie_jar attribute!")
 
-                    _LOGGER.error("No PHPSESSID found in any location")
-                    _LOGGER.debug("All response headers: %s", dict(response.headers))
-                    return False
-                else:
-                    _LOGGER.error("Authentication failed with status %s (expected 302)", response.status)
-                    response_text = await response.text()
-                    _LOGGER.debug("Response: %s", response_text[:200])
-                    return False
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Error during authentication: %s", err)
-            return False
-        except Exception as err:
-            _LOGGER.error("Unexpected error during authentication: %s", err, exc_info=True)
-            return False
+                        if self._phpsessid:
+                            self._is_authenticated = True
+                            _LOGGER.info("Successfully authenticated with EVC-net")
+                            _LOGGER.debug("PHPSESSID: %s", self._phpsessid[:10] + "...")
+                            return True
 
-    async def _make_ajax_request(self, requests_payload: dict) -> dict[str, Any]:
-        """Make an AJAX request to the EVC-net API."""
+                        _LOGGER.error("No PHPSESSID found after successful 302 redirect")
+                        _LOGGER.error("This suggests a cookie handling issue")
+                        _LOGGER.debug("All response headers: %s", dict(response.headers))
+                        return False
+                    else:
+                        _LOGGER.error("Authentication failed with status %s (expected 302)", response.status)
+                        response_text = await response.text()
+                        _LOGGER.error("Response body (first 500 chars): %s", response_text[:500])
+                        _LOGGER.debug("Full response headers: %s", dict(response.headers))
+                        
+                        # Check for common error patterns
+                        if "invalid" in response_text.lower() or "incorrect" in response_text.lower():
+                            _LOGGER.error("Response suggests invalid credentials")
+                        if response.status == 200:
+                            _LOGGER.error("Status 200 suggests credentials were not accepted (should be 302)")
+                        
+                        return False
+            except aiohttp.ClientError as err:
+                _LOGGER.error("Error during authentication: %s", err)
+                return False
+            except Exception as err:
+                _LOGGER.error("Unexpected error during authentication: %s", err, exc_info=True)
+                return False
+
+    async def _make_ajax_request(self, requests_payload: dict, _retry_count: int = 0) -> dict[str, Any]:
+        """Make an AJAX request to the EVC-net API.
+        
+        Args:
+            requests_payload: The payload to send
+            _retry_count: Internal retry counter to prevent infinite recursion
+        """
+        # Prevent infinite recursion - allow only 1 retry
+        if _retry_count > 1:
+            raise Exception("Max retries exceeded for API request")
+        
         if not self._is_authenticated:
             if not await self.authenticate():
                 raise Exception("Failed to authenticate")
@@ -99,9 +147,18 @@ class EvcNetApiClient:
             "requests": json.dumps(requests_payload)
         }
 
+        _LOGGER.debug(
+            "Making AJAX request (retry: %d): handler=%s, method=%s",
+            _retry_count,
+            requests_payload.get("0", {}).get("handler", "unknown"),
+            requests_payload.get("0", {}).get("method", "unknown")
+        )
+        _LOGGER.debug("Using PHPSESSID: %s...", self._phpsessid[:10] if self._phpsessid else "None")
+
         try:
             # Make request with explicit cookie header
             async with self.session.post(url, headers=headers, cookies=cookies, data=data) as response:
+                _LOGGER.debug("AJAX response status: %s, content-type: %s", response.status, response.headers.get('Content-Type', 'unknown'))
                 # Check content type before trying to parse JSON
                 content_type = response.headers.get('Content-Type', '')
 
@@ -118,16 +175,18 @@ class EvcNetApiClient:
                                 # It's HTML, session expired
                                 _LOGGER.warning(
                                     "Received HTML instead of JSON (status %s, content-type: %s), "
-                                    "session likely expired. Re-authenticating...",
+                                    "session likely expired. Re-authenticating... (retry %d)",
                                     response.status,
-                                    content_type
+                                    content_type,
+                                    _retry_count
                                 )
+                                _LOGGER.debug("HTML response (first 300 chars): %s", response_text[:300])
                                 self._is_authenticated = False
 
                                 # Try to re-authenticate
                                 if await self.authenticate():
-                                    # Retry the request once
-                                    return await self._make_ajax_request(requests_payload)
+                                    # Retry the request once with incremented counter
+                                    return await self._make_ajax_request(requests_payload, _retry_count + 1)
 
                                 raise Exception("Re-authentication failed or still getting HTML response")
                         except json.JSONDecodeError as err:
@@ -139,11 +198,11 @@ class EvcNetApiClient:
 
                 elif response.status in [401, 302]:
                     # Session expired, re-authenticate
-                    _LOGGER.info("Session expired (status %s), re-authenticating", response.status)
+                    _LOGGER.info("Session expired (status %s), re-authenticating (retry %d)", response.status, _retry_count)
                     self._is_authenticated = False
                     if await self.authenticate():
-                        # Retry the request
-                        return await self._make_ajax_request(requests_payload)
+                        # Retry the request with incremented counter
+                        return await self._make_ajax_request(requests_payload, _retry_count + 1)
                     raise Exception("Re-authentication failed")
                 else:
                     response_text = await response.text()
