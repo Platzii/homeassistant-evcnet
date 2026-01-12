@@ -46,34 +46,46 @@ class EvcNetApiClient:
             
             url = f"{self.base_url}{LOGIN_ENDPOINT}"
 
+
             data = {
                 "emailField": self.username,
                 "passwordField": self.password,
             }
 
-            _LOGGER.debug("Attempting authentication to: %s", url)
-            _LOGGER.debug("Username: %s", self.username[:3] + "***" if len(self.username) > 3 else "***")
+            # Add browser-like headers
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Referer": url,
+                "Origin": self.base_url,
+                "Connection": "keep-alive",
+            }
+
+            _LOGGER.info("HTTP REQUEST: POST %s", url)
+            _LOGGER.debug("Request headers: %s", headers)
+            _LOGGER.debug("Request data: %s", {k: (v[:3] + '***' if k == 'emailField' and len(v) > 3 else v) for k, v in data.items()})
 
             try:
                 # Don't follow redirects automatically, we need to capture cookies
                 async with self.session.post(
                     url,
                     data=data,
+                    headers=headers,
                     allow_redirects=False  # Don't follow redirects
                 ) as response:
-                    _LOGGER.debug("Login response status: %s", response.status)
+                    _LOGGER.info("HTTP RESPONSE: %s %s -> %s", "POST", url, response.status)
                     _LOGGER.debug("Login response headers: %s", dict(response.headers))
 
                     # Login returns 302 redirect
                     if response.status == 302:
                         _LOGGER.debug("Received expected 302 redirect")
                         _LOGGER.debug("Location header: %s", response.headers.get('Location', 'Not present'))
-                        
-                        # Only method that works with multiple cookies: From cookie jar (HASS session has cookie support)
+
+                        # Check cookies after initial POST
                         if hasattr(self.session, 'cookie_jar'):
                             cookies = self.session.cookie_jar.filter_cookies(self.base_url)
                             _LOGGER.debug("Total cookies in jar for %s: %d", self.base_url, len(cookies))
-                            
                             for cookie in cookies.values():
                                 _LOGGER.debug("Cookie found: %s = %s...", cookie.key, cookie.value[:10] if cookie.value else "None")
                                 if cookie.key == 'PHPSESSID':
@@ -85,14 +97,36 @@ class EvcNetApiClient:
                         else:
                             _LOGGER.error("Session does not have cookie_jar attribute!")
 
+                        # If PHPSESSID not found, try to follow the redirect manually
+                        if not self._phpsessid and 'Location' in response.headers:
+                            redirect_url = response.headers['Location']
+                            if not redirect_url.startswith('http'):
+                                # Relative redirect
+                                redirect_url = self.base_url.rstrip('/') + redirect_url
+                            _LOGGER.info("HTTP REQUEST: GET %s", redirect_url)
+                            async with self.session.get(redirect_url, headers=headers, allow_redirects=False) as redirect_response:
+                                _LOGGER.info("HTTP RESPONSE: %s %s -> %s", "GET", redirect_url, redirect_response.status)
+                                _LOGGER.debug("Redirect response headers: %s", dict(redirect_response.headers))
+                                if hasattr(self.session, 'cookie_jar'):
+                                    cookies = self.session.cookie_jar.filter_cookies(self.base_url)
+                                    _LOGGER.debug("Total cookies in jar after redirect for %s: %d", self.base_url, len(cookies))
+                                    for cookie in cookies.values():
+                                        _LOGGER.debug("Cookie found after redirect: %s = %s...", cookie.key, cookie.value[:10] if cookie.value else "None")
+                                        if cookie.key == 'PHPSESSID':
+                                            self._phpsessid = cookie.value
+                                            _LOGGER.info("Found PHPSESSID in cookie jar after redirect: %s...", cookie.value[:10])
+                                        if cookie.key == 'SERVERID':
+                                            self._serverid = cookie.value
+                                            _LOGGER.info("Found SERVERID in cookie jar after redirect: %s", cookie.value)
+
                         if self._phpsessid:
                             self._is_authenticated = True
                             _LOGGER.info("Successfully authenticated with EVC-net")
                             _LOGGER.debug("PHPSESSID: %s", self._phpsessid[:10] + "...")
                             return True
 
-                        _LOGGER.error("No PHPSESSID found after successful 302 redirect")
-                        _LOGGER.error("This suggests a cookie handling issue")
+                        _LOGGER.error("No PHPSESSID found after 302 redirect and manual follow-up")
+                        _LOGGER.error("This suggests a cookie handling or login flow issue")
                         _LOGGER.debug("All response headers: %s", dict(response.headers))
                         return False
                     else:
@@ -100,13 +134,11 @@ class EvcNetApiClient:
                         response_text = await response.text()
                         _LOGGER.error("Response body (first 500 chars): %s", response_text[:500])
                         _LOGGER.debug("Full response headers: %s", dict(response.headers))
-                        
                         # Check for common error patterns
                         if "invalid" in response_text.lower() or "incorrect" in response_text.lower():
                             _LOGGER.error("Response suggests invalid credentials")
                         if response.status == 200:
                             _LOGGER.error("Status 200 suggests credentials were not accepted (should be 302)")
-                        
                         return False
             except aiohttp.ClientError as err:
                 _LOGGER.error("Error during authentication: %s", err)
@@ -147,17 +179,17 @@ class EvcNetApiClient:
             "requests": json.dumps(requests_payload)
         }
 
-        _LOGGER.debug(
-            "Making AJAX request (retry: %d): handler=%s, method=%s",
-            _retry_count,
-            requests_payload.get("0", {}).get("handler", "unknown"),
-            requests_payload.get("0", {}).get("method", "unknown")
-        )
+        # Log AJAX request details
+        handler = requests_payload.get("0", {}).get("handler", "unknown")
+        method = requests_payload.get("0", {}).get("method", "unknown")
+        _LOGGER.info("HTTP REQUEST: POST %s (AJAX) [handler=%s, method=%s]", url, handler, method)
+        _LOGGER.debug("AJAX request payload: %s", requests_payload)
         _LOGGER.debug("Using PHPSESSID: %s...", self._phpsessid[:10] if self._phpsessid else "None")
 
         try:
             # Make request with explicit cookie header
             async with self.session.post(url, headers=headers, cookies=cookies, data=data) as response:
+                _LOGGER.info("HTTP RESPONSE: %s %s -> %s", "POST", url, response.status)
                 _LOGGER.debug("AJAX response status: %s, content-type: %s", response.status, response.headers.get('Content-Type', 'unknown'))
                 # Check content type before trying to parse JSON
                 content_type = response.headers.get('Content-Type', '')
