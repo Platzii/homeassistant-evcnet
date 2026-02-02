@@ -21,6 +21,14 @@ start_charging:
       selector:
         text:
 
+stop_charging:
+  name: Stop charging
+  description: Stop the current charging session
+  target:
+    entity:
+      domain: switch
+      integration: evcnet
+
 soft_reset:
   name: Soft reset
   description: Perform a soft reset on the charging station

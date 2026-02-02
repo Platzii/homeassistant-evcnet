@@ -125,6 +125,56 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             else:
                 _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
 
+    async def async_handle_stop_charging(call: ServiceCall) -> None:
+        """Handle the stop_charging action call."""
+        entity_ids = await service.async_extract_entity_ids(call)
+
+        if not entity_ids:
+            _LOGGER.error(
+                "Action stop_charging requires entity_id. "
+                "Received call data: %s",
+                call.data
+            )
+            return
+
+        # Process each entity
+        for entity_id in entity_ids:
+            # Only process switch entities (ignore sensors when device/area is selected)
+            if not entity_id.startswith("switch."):
+                continue
+
+            # Get the entity registry to find which config entry this entity belongs to
+            entity_registry = er.async_get(hass)
+            entity_entry = entity_registry.async_get(entity_id)
+
+            if not entity_entry:
+                _LOGGER.error("Entity %s not found", entity_id)
+                continue
+
+            # Find the coordinator for this entity's config entry
+            config_entry_id = entity_entry.config_entry_id
+            if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
+                _LOGGER.error("Could not find coordinator for entity %s", entity_id)
+                continue
+
+            coordinator = hass.data[DOMAIN][config_entry_id]
+
+            # Extract spot_id from unique_id (format: {spot_id}_charging)
+            unique_id = entity_entry.unique_id
+            if not unique_id or not unique_id.endswith("_charging"):
+                _LOGGER.debug("Skipping entity %s (not a charging switch): %s", entity_id, unique_id)
+                continue
+
+            # Get the entity from stored references
+            entities_dict = getattr(coordinator, "entities", {})
+            switch_entity = entities_dict.get(unique_id)
+
+            if switch_entity and hasattr(switch_entity, 'async_turn_off'):
+                # Call the entity's method directly
+                await switch_entity.async_turn_off()
+            else:
+                _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
+
     async def async_handle_charging_action(call: ServiceCall, action_name: str) -> None:
         """Handle charging station actions (soft_reset, hard_reset, unlock_connector, block, unblock)."""
         entity_ids = await service.async_extract_entity_ids(call)
@@ -216,6 +266,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         DOMAIN,
         "start_charging",
         async_handle_start_charging,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "stop_charging",
+        async_handle_stop_charging,
     )
 
     hass.services.async_register(
