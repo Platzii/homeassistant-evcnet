@@ -25,6 +25,52 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up is called when Home Assistant is loading our component."""
 
+    async def async_handle_refresh_status(call: ServiceCall) -> None:
+        """Handle the refresh_status action call."""
+        entity_ids = await service.async_extract_entity_ids(call)
+
+        if not entity_ids:
+            _LOGGER.error(
+                "Action refresh_status requires entity_id. "
+                "Received call data: %s",
+                call.data
+            )
+            return
+
+        # Process each entity
+        for entity_id in entity_ids:
+            # Only process button entities
+            if not entity_id.startswith("button."):
+                continue
+
+            # Get the entity registry to find which config entry this entity belongs to
+            entity_registry = er.async_get(hass)
+            entity_entry = entity_registry.async_get(entity_id)
+
+            if not entity_entry:
+                _LOGGER.error("Entity %s not found", entity_id)
+                continue
+
+            # Find the coordinator for this entity's config entry
+            config_entry_id = entity_entry.config_entry_id
+            if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
+                _LOGGER.error("Could not find coordinator for entity %s", entity_id)
+                continue
+
+            coordinator = hass.data[DOMAIN][config_entry_id]
+
+            # Extract spot_id from unique_id (format: {spot_id}_refresh_status)
+            unique_id = entity_entry.unique_id
+            if not unique_id or not unique_id.endswith("_refresh_status"):
+                _LOGGER.debug("Skipping entity %s (not a refresh status button): %s", entity_id, unique_id)
+                continue
+
+            try:
+                _LOGGER.info("Manually refreshing status via service call for entity %s", entity_id)
+                await coordinator.async_request_refresh()
+            except Exception as err:
+                _LOGGER.error("Failed to refresh status: %s", err, exc_info=True)
+
     async def async_handle_start_charging(call: ServiceCall) -> None:
         """Handle the start_charging action call."""
         # Use service helper to expand target (handles services.yaml target resolution)
@@ -160,6 +206,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 await coordinator.async_request_refresh()
 
     # Register the actions - Home Assistant will load schema from services.yaml
+    hass.services.async_register(
+        DOMAIN,
+        "refresh_status",
+        async_handle_refresh_status,
+    )
+
     hass.services.async_register(
         DOMAIN,
         "start_charging",

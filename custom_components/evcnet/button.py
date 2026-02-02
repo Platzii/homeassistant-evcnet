@@ -28,6 +28,7 @@ async def async_setup_entry(
     for spot_id in coordinator.data:
         # Add button entities for each charging spot
         entities.extend([
+            EvcNetRefreshStatusButton(coordinator, spot_id),
             EvcNetSoftResetButton(coordinator, spot_id),
             EvcNetHardResetButton(coordinator, spot_id),
             EvcNetUnlockConnectorButton(coordinator, spot_id),
@@ -104,6 +105,50 @@ class EvcNetButtonBase(CoordinatorEntity[EvcNetCoordinator], ButtonEntity):
             _LOGGER.error("Failed to execute %s: %s", self._button_type, err, exc_info=True)
             # Force refresh even on error
             await self.coordinator.async_request_refresh()
+
+
+class EvcNetRefreshStatusButton(CoordinatorEntity[EvcNetCoordinator], ButtonEntity):
+    """Button to manually refresh status from the portal."""
+
+    def __init__(self, coordinator: EvcNetCoordinator, spot_id: str) -> None:
+        """Initialize the refresh status button."""
+        super().__init__(coordinator)
+        self._spot_id = spot_id
+        self._attr_unique_id = f"{spot_id}_refresh_status"
+        self._attr_icon = "mdi:refresh"
+
+        # Get spot info from coordinator data
+        spot_info = coordinator.data.get(spot_id, {}).get("info", {})
+
+        # Use NAME field, or fallback to spot ID
+        spot_name = spot_info.get("NAME")
+        if not spot_name or spot_name.strip() == "":
+            spot_name = f"Charge Spot {spot_id}"
+
+        self._attr_name = f"{spot_name} Refresh Status"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, spot_id)},
+            "name": spot_name,
+            "manufacturer": "Last Mile Solutions",
+            "model": "EVC-net Charging Station",
+            "sw_version": spot_info.get("SOFTWARE_VERSION"),
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self._spot_id in self.coordinator.data
+
+    async def async_press(self) -> None:
+        """Handle the button press."""
+        try:
+            _LOGGER.info("Manually refreshing status for spot %s", self._spot_id)
+            
+            # Trigger immediate coordinator refresh
+            await self.coordinator.async_request_refresh()
+            
+        except Exception as err:
+            _LOGGER.error("Failed to refresh status: %s", err, exc_info=True)
 
 
 class EvcNetSoftResetButton(EvcNetButtonBase):

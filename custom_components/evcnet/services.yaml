@@ -1,3 +1,11 @@
+refresh_status:
+  name: Refresh status
+  description: Manually trigger an immediate status update from the portal
+  target:
+    entity:
+      domain: button
+      integration: evcnet
+
 start_charging:
   name: Start charging
   description: Start a charging session with an optional RFID card ID
