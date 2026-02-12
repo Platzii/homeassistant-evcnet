@@ -64,7 +64,11 @@ class EvcNetApiClient:
 
             _LOGGER.info("HTTP REQUEST: POST %s", url)
             _LOGGER.debug("Request headers: %s", headers)
-            _LOGGER.debug("Request data: %s", {k: (v[:3] + '***' if k == 'emailField' and len(v) > 3 else v) for k, v in data.items()})
+            # Never log credentials; redact email and password
+            _LOGGER.debug(
+                "Request data: %s",
+                {k: ("***" if k in ("emailField", "passwordField") else v) for k, v in data.items()},
+            )
 
             try:
                 # Don't follow redirects automatically, we need to capture cookies
