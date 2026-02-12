@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import ACTION_SETTLE_DELAY_SEC, DOMAIN
 from .coordinator import EvcNetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class EvcNetButtonBase(CoordinatorEntity[EvcNetCoordinator], ButtonEntity):
             await action_method(self._spot_id, channel)
 
             # Wait for the action to take effect
-            await asyncio.sleep(3)
+            await asyncio.sleep(ACTION_SETTLE_DELAY_SEC)
 
             # Force a refresh to get the new state
             await self.coordinator.async_request_refresh()

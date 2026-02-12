@@ -12,6 +12,7 @@ CONF_MAX_CHANNELS = "max_channels"
 DEFAULT_BASE_URL = "https://50five-sbelux.evc-net.com"
 DEFAULT_SCAN_INTERVAL = 30  # seconds
 DEFAULT_MAX_CHANNELS = 1
+ACTION_SETTLE_DELAY_SEC = 3 # Seconds to wait after start/stop/action before refreshing coordinator data
 
 # API endpoints
 LOGIN_ENDPOINT = "/Login/Login"

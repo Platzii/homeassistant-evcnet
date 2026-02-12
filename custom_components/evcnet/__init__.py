@@ -11,7 +11,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .api import EvcNetApiClient
-from .const import CONF_BASE_URL, DOMAIN, CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS
+from .const import (
+    ACTION_SETTLE_DELAY_SEC,
+    CONF_BASE_URL,
+    CONF_MAX_CHANNELS,
+    DEFAULT_MAX_CHANNELS,
+    DOMAIN,
+)
 from .coordinator import EvcNetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -176,7 +182,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     await coordinator.client.block(spot_id, channel)
                 elif action_name == "unblock":
                     await coordinator.client.unblock(spot_id, channel)
-                await asyncio.sleep(3)
+                await asyncio.sleep(ACTION_SETTLE_DELAY_SEC)
                 await coordinator.async_request_refresh()
             except Exception as err:
                 _LOGGER.error(

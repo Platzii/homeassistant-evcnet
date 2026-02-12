@@ -9,7 +9,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_CARD_ID, CONF_CUSTOMER_ID, DOMAIN, CHARGESPOT_STATUS1_FLAGS, CHARGESPOT_STATUS2_FLAGS
+from .const import (
+    ACTION_SETTLE_DELAY_SEC,
+    CONF_CARD_ID,
+    CONF_CUSTOMER_ID,
+    DOMAIN,
+    CHARGESPOT_STATUS1_FLAGS,
+    CHARGESPOT_STATUS2_FLAGS,
+)
 from .coordinator import EvcNetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -234,7 +241,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
             # Wait a bit for the charging station to process the command
             # before refreshing the status
-            await asyncio.sleep(3)
+            await asyncio.sleep(ACTION_SETTLE_DELAY_SEC)
 
             # Force a refresh to get the new state
             await self.coordinator.async_request_refresh()
@@ -265,7 +272,7 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
             # Wait a bit for the charging station to process the command
             # before refreshing the status
-            await asyncio.sleep(3)
+            await asyncio.sleep(ACTION_SETTLE_DELAY_SEC)
 
             # Force a refresh to get the new state
             await self.coordinator.async_request_refresh()
