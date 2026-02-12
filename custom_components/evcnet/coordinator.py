@@ -28,6 +28,8 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.max_channels = max(1, int(max_channels))
         # Auto-detected channel count per spot_id
         self.spot_channels: dict[str, int] = {}
+        # Switch entities by unique_id, for service handlers (start/stop charging, actions)
+        self.entities: dict[str, Any] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""

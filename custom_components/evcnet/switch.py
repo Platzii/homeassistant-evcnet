@@ -24,10 +24,6 @@ async def async_setup_entry(
     coordinator: EvcNetCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities = []
-    # Initialize entities dict on coordinator if not exists
-    if not hasattr(coordinator, "entities"):
-        coordinator.entities = {}
-
     for spot_id in coordinator.data:
         # Get detected number of channels for this spot
         detected_channels = coordinator.spot_channels.get(str(spot_id), 1)
