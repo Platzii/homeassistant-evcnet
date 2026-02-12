@@ -58,79 +58,81 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Get status for all charging spots
             data = {}
             for spot in self.charge_spots:
-                # The spot ID is in the IDX field
-                spot_id = spot.get("IDX")
-                if spot_id:
+                # The spot ID is in the IDX field; normalize to str for consistent dict keys
+                raw_id = spot.get("IDX")
+                if raw_id is None:
+                    continue
+                spot_id = str(raw_id)
+                try:
+                    # Get status
+                    status = await self.client.get_spot_overview(spot_id)
+                    total_energy_usage = await self.client.get_spot_total_energy_usage(spot_id)
+                    # Determine number of channels from status payload if possible
+                    detected_channels = 1
                     try:
-                        # Get status
-                        status = await self.client.get_spot_overview(str(spot_id))
-                        total_energy_usage = await self.client.get_spot_total_energy_usage(str(spot_id))
-                        # Determine number of channels from status payload if possible
+                        if (isinstance(status, list) and len(status) > 0 and
+                            isinstance(status[0], list) and len(status[0]) > 0):
+                            detected_channels = max(1, len(status[0]))
+                    except Exception:
                         detected_channels = 1
+
+                    # Store detected channels and compute effective max to fetch
+                    self.spot_channels[spot_id] = detected_channels
+                    effective_max = max(self.max_channels, detected_channels)
+
+                    # Fetch logs per channel (1..effective_max)
+                    channels: dict[int, dict[str, Any]] = {}
+                    for ch in range(1, effective_max + 1):
+                        ch_str = str(ch)
                         try:
-                            if (isinstance(status, list) and len(status) > 0 and
-                                isinstance(status[0], list) and len(status[0]) > 0):
-                                detected_channels = max(1, len(status[0]))
-                        except Exception:
-                            detected_channels = 1
+                            ch_log = await self.client.get_spot_log(spot_id, ch_str)
+                        except Exception as log_err:
+                            _LOGGER.debug(
+                                "Failed to fetch log for spot %s channel %s: %s (continuing)",
+                                spot_id,
+                                ch_str,
+                                log_err,
+                            )
+                            # Preserve previous channel log if available
+                            ch_log = (
+                                self.data.get(spot_id, {})
+                                .get("channels", {})
+                                .get(ch, {})
+                                .get("log", [])
+                                if self.data else []
+                            )
+                        channels[ch] = {"log": ch_log}
 
-                        # Store detected channels and compute effective max to fetch
-                        self.spot_channels[str(spot_id)] = detected_channels
-                        effective_max = max(self.max_channels, detected_channels)
+                    # Keep top-level 'log' for backwards compatibility (channel 1)
+                    log_data = channels.get(1, {}).get("log", [])
 
-                        # Fetch logs per channel (1..effective_max)
-                        channels: dict[int, dict[str, Any]] = {}
-                        for ch in range(1, effective_max + 1):
-                            ch_str = str(ch)
-                            try:
-                                ch_log = await self.client.get_spot_log(str(spot_id), ch_str)
-                            except Exception as log_err:
-                                _LOGGER.debug(
-                                    "Failed to fetch log for spot %s channel %s: %s (continuing)",
-                                    spot_id,
-                                    ch_str,
-                                    log_err,
-                                )
-                                # Preserve previous channel log if available
-                                ch_log = (
-                                    self.data.get(spot_id, {})
-                                    .get("channels", {})
-                                    .get(ch, {})
-                                    .get("log", [])
-                                    if self.data else []
-                                )
-                            channels[ch] = {"log": ch_log}
+                    _LOGGER.debug("Status for spot %s: %s", spot_id, status)
+                    _LOGGER.debug("Total energy usage for spot %s: %s", spot_id, total_energy_usage)
+                    _LOGGER.debug("Log data for spot %s: %s", spot_id, log_data)
 
-                        # Keep top-level 'log' for backwards compatibility (channel 1)
-                        log_data = channels.get(1, {}).get("log", [])
-
-                        _LOGGER.debug("Status for spot %s: %s", spot_id, status)
-                        _LOGGER.debug("Total energy usage for spot %s: %s", spot_id, total_energy_usage)
-                        _LOGGER.debug("Log data for spot %s: %s", spot_id, log_data)
-
+                    data[spot_id] = {
+                        "info": spot,
+                        "status": status,
+                        "total_energy_usage": total_energy_usage,
+                        "log": log_data,
+                        "channels": channels,
+                    }
+                except Exception as err:
+                    _LOGGER.debug(
+                        "Failed to fetch data for spot %s: %s (will retry next update)",
+                        spot_id, err
+                    )
+                    # Keep existing data if available, otherwise use basic info
+                    if spot_id in self.data:
+                        data[spot_id] = self.data[spot_id]
+                    else:
                         data[spot_id] = {
                             "info": spot,
-                            "status": status,
-                            "total_energy_usage": total_energy_usage,
-                            "log": log_data,
-                            "channels": channels,
+                            "status": [],
+                            "total_energy_usage": [],
+                            "log": [],
+                            "channels": {},
                         }
-                    except Exception as err:
-                        _LOGGER.debug(
-                            "Failed to fetch data for spot %s: %s (will retry next update)",
-                            spot_id, err
-                        )
-                        # Keep existing data if available, otherwise use basic info
-                        if spot_id in self.data:
-                            data[spot_id] = self.data[spot_id]
-                        else:
-                            data[spot_id] = {
-                                "info": spot,
-                                "status": [],
-                                "total_energy_usage": [],
-                                "log": [],
-                                "channels": {},
-                            }
 
             return data
 
