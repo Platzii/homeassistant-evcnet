@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] - 2026-02-12
+
+This release introduces multi-channel support and is versioned 1.0.0 to reflect the impact for users with multi-connector charging stations.
+
+### Added
+- **Log retrieval**: New sensors show charging log summary, last log time, and last log notification. The log summary sensor exposes a markdown table of recent sessions (usable in a Markdown card).
+- **Multi-channel support**: For charging stations with multiple connectors, you can set "Max channels" in the integration options to get per-channel sensors and switches (e.g. "Ch 1 Charging", "Ch 2 Charging"). Single-connector setups are unchanged.
+- **Refresh status**: New button and `evcnet.refresh_status` action to trigger an immediate status update from the portal.
+- **Stop charging**: New `evcnet.stop_charging` action to stop the current charging session via an automation or script.
+
+### Changed
+- Session energy sensor now uses the correct state class for cumulative energy (total_increasing).
+- Log data (entries, table, markdown) is only attached to the log summary sensor and is not stored in history, avoiding Recorder warnings while keeping the data available for the UI.
+- Improved login handling (browser-like headers, retry limit and backoff) for more reliable authentication across different EVC-net endpoints.
+- Reduced logging noise: only useful messages at normal level; technical details moved to debug.
+
 ## [0.2.1] - 2025-12-10
 
 ### Fixed

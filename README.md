@@ -10,11 +10,12 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 
 ## Features
 
-- **Sensors**: Monitor charging status, power consumption, and energy usage
+- **Sensors**: Monitor charging status, power consumption, energy usage, and charging log (summary, last log time, last log notification)
 - **Switch**: Start and stop charging sessions
 - **Buttons**: Control charging station operations (soft/hard reset, unlock connector, block/unblock, refresh status)
-- **Real-time updates**: Automatic polling every 30 seconds
-- **Action calls**: Start/stop a charging session using an action (allows to define a specific RFID card), reset, unlock connector, block/unblock is also available.
+- **Multi-channel**: Optional support for stations with multiple connectors (per-channel sensors and switches)
+- **Real-time updates**: Automatic polling every 30 seconds; use the Refresh Status button or action for an immediate update
+- **Action calls**: Start/stop charging, refresh status, reset, unlock connector, block/unblock (with optional RFID card for start)
 
 ## Installation
 
@@ -92,11 +93,16 @@ For each charging station, the integration creates:
 - **Current Power**: Active power draw in kilowatts
 - **Session Energy**: Energy consumed in current session (kWh)
 - **Session Time**: Duration of current charging session in hours
+- **Log Summary**: Number of log entries; attributes include a markdown table of recent sessions (for use in a Markdown card)
+- **Last Log Notification** / **Last Log Time**: Latest log entry summary
+
+On stations with multiple connectors (when "Max channels" > 1 in options), sensors are created per channel (e.g. "Ch 1 Status", "Ch 2 Status").
 
 ### Switch
 - **Charging**: Turn on to start charging, off to stop
 
 ### Buttons
+- **Refresh Status**: Manually trigger an immediate status update from the portal
 - **Soft Reset**: Perform a soft reset on the charging station
 - **Hard Reset**: Perform a hard reset on the charging station
 - **Unlock Connector**: Unlock the connector on the charging station
@@ -121,7 +127,20 @@ data:
 
 **Note**: If you don't specify a `card_id` in the action, the integration will use the default card configured in the integration settings.
 
-Other options are:
+### Viewing charging log in a card
+
+To show recent charging sessions in a Markdown card, use the log summary sensor's `log_markdown` attribute. Add a Markdown card with:
+
+```yaml
+type: markdown
+title: EVC-net Log
+content: >-
+  {{ state_attr('sensor.your_spot_log_summary', 'log_markdown') }}
+```
+
+Replace `your_spot_log_summary` with your actual log summary sensor entity ID (e.g. `sensor.charge_spot_12345_log_summary`).
+
+Other actions are:
 
 ```yaml
 action: evcnet.stop_charging
@@ -155,7 +174,7 @@ action: evcnet.refresh_status
 
 After initial setup, you can modify configuration through the Home Assistant UI:
 
-### Quick Settings (Card ID & Customer ID)
+### Quick Settings (Card ID, Customer ID, Max Channels)
 
 1. Go to **Settings** → **Devices & Services**
 2. Find your **EVC-net** integration
@@ -163,6 +182,7 @@ After initial setup, you can modify configuration through the Home Assistant UI:
 4. Update your settings:
    - **RFID Card ID**: Your charging card ID
    - **Customer ID**: Your customer ID (optional)
+   - **Max channels**: For stations with multiple connectors, set to 2 or more to create per-channel sensors and switches (e.g. "Ch 1 Charging", "Ch 2 Charging"). Leave at 1 for single-connector stations. Changing this option reloads the integration.
 
 ### Change Connection Credentials (URL, Username, Password)
 
