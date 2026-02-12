@@ -41,9 +41,9 @@ class EvcNetApiClient:
                     time_since_last_auth
                 )
                 return True
-            
+
             self._last_auth_attempt = time.time()
-            
+
             url = f"{self.base_url}{LOGIN_ENDPOINT}"
 
 
@@ -62,8 +62,8 @@ class EvcNetApiClient:
                 "Connection": "keep-alive",
             }
 
-            _LOGGER.info("HTTP REQUEST: POST %s", url)
-            _LOGGER.debug("Request headers: %s", headers)
+            _LOGGER.debug("Login request: POST %s", url)
+            _LOGGER.debug("Login request headers: %s", headers)
             # Never log credentials; redact email and password
             _LOGGER.debug(
                 "Request data: %s",
@@ -78,7 +78,7 @@ class EvcNetApiClient:
                     headers=headers,
                     allow_redirects=False  # Don't follow redirects
                 ) as response:
-                    _LOGGER.info("HTTP RESPONSE: %s %s -> %s", "POST", url, response.status)
+                    _LOGGER.debug("Login response: POST %s -> %s", url, response.status)
                     _LOGGER.debug("Login response headers: %s", dict(response.headers))
 
                     # Login returns 302 redirect
@@ -91,13 +91,23 @@ class EvcNetApiClient:
                             cookies = self.session.cookie_jar.filter_cookies(self.base_url)
                             _LOGGER.debug("Total cookies in jar for %s: %d", self.base_url, len(cookies))
                             for cookie in cookies.values():
-                                _LOGGER.debug("Cookie found: %s = %s...", cookie.key, cookie.value[:10] if cookie.value else "None")
+                                _LOGGER.debug(
+                                    "Cookie found: %s = %s",
+                                    cookie.key,
+                                    cookie.value[:5] + "..." if cookie.key == "PHPSESSID" and cookie.value else (cookie.value or "None"),
+                                )
                                 if cookie.key == 'PHPSESSID':
                                     self._phpsessid = cookie.value
-                                    _LOGGER.info("Found PHPSESSID in cookie jar: %s...", cookie.value[:10])
+                                    _LOGGER.debug(
+                                        "Found PHPSESSID in cookie jar: %s...",
+                                        cookie.value[:5] if cookie.value else "None",
+                                    )
                                 if cookie.key == 'SERVERID':
                                     self._serverid = cookie.value
-                                    _LOGGER.info("Found SERVERID in cookie jar: %s", cookie.value)
+                                    _LOGGER.debug(
+                                        "Found SERVERID in cookie jar: %s",
+                                        cookie.value or "None",
+                                    )
                         else:
                             _LOGGER.error("Session does not have cookie_jar attribute!")
 
@@ -107,26 +117,40 @@ class EvcNetApiClient:
                             if not redirect_url.startswith('http'):
                                 # Relative redirect
                                 redirect_url = self.base_url.rstrip('/') + redirect_url
-                            _LOGGER.info("HTTP REQUEST: GET %s", redirect_url)
+                            _LOGGER.debug("Login redirect: GET %s", redirect_url)
                             async with self.session.get(redirect_url, headers=headers, allow_redirects=False) as redirect_response:
-                                _LOGGER.info("HTTP RESPONSE: %s %s -> %s", "GET", redirect_url, redirect_response.status)
+                                _LOGGER.debug("Login redirect response: GET %s -> %s", redirect_url, redirect_response.status)
                                 _LOGGER.debug("Redirect response headers: %s", dict(redirect_response.headers))
                                 if hasattr(self.session, 'cookie_jar'):
                                     cookies = self.session.cookie_jar.filter_cookies(self.base_url)
                                     _LOGGER.debug("Total cookies in jar after redirect for %s: %d", self.base_url, len(cookies))
                                     for cookie in cookies.values():
-                                        _LOGGER.debug("Cookie found after redirect: %s = %s...", cookie.key, cookie.value[:10] if cookie.value else "None")
+                                        _LOGGER.debug(
+                                            "Cookie found after redirect: %s = %s",
+                                            cookie.key,
+                                            cookie.value[:5] + "..." if cookie.key == "PHPSESSID" and cookie.value else (cookie.value or "None"),
+                                        )
                                         if cookie.key == 'PHPSESSID':
                                             self._phpsessid = cookie.value
-                                            _LOGGER.info("Found PHPSESSID in cookie jar after redirect: %s...", cookie.value[:10])
+                                            _LOGGER.debug(
+                                                "Found PHPSESSID in cookie jar after redirect: %s...",
+                                                cookie.value[:5] if cookie.value else "None",
+                                            )
                                         if cookie.key == 'SERVERID':
                                             self._serverid = cookie.value
-                                            _LOGGER.info("Found SERVERID in cookie jar after redirect: %s", cookie.value)
+                                            _LOGGER.debug(
+                                                "Found SERVERID in cookie jar after redirect: %s",
+                                                cookie.value or "None",
+                                            )
 
                         if self._phpsessid:
                             self._is_authenticated = True
                             _LOGGER.info("Successfully authenticated with EVC-net")
-                            _LOGGER.debug("PHPSESSID: %s", self._phpsessid[:10] + "...")
+                            _LOGGER.debug(
+                                "PHPSESSID: %s... (length %d)",
+                                self._phpsessid[:5] if self._phpsessid else "None",
+                                len(self._phpsessid) if self._phpsessid else 0,
+                            )
                             return True
 
                         _LOGGER.error("No PHPSESSID found after 302 redirect and manual follow-up")
@@ -153,7 +177,7 @@ class EvcNetApiClient:
 
     async def _make_ajax_request(self, requests_payload: dict, _retry_count: int = 0) -> dict[str, Any]:
         """Make an AJAX request to the EVC-net API.
-        
+
         Args:
             requests_payload: The payload to send
             _retry_count: Internal retry counter to prevent infinite recursion
@@ -161,7 +185,7 @@ class EvcNetApiClient:
         # Prevent infinite recursion - allow only 1 retry
         if _retry_count > 1:
             raise Exception("Max retries exceeded for API request")
-        
+
         if not self._is_authenticated:
             if not await self.authenticate():
                 raise Exception("Failed to authenticate")
@@ -183,18 +207,22 @@ class EvcNetApiClient:
             "requests": json.dumps(requests_payload)
         }
 
-        # Log AJAX request details
         handler = requests_payload.get("0", {}).get("handler", "unknown")
         method = requests_payload.get("0", {}).get("method", "unknown")
-        _LOGGER.info("HTTP REQUEST: POST %s (AJAX) [handler=%s, method=%s]", url, handler, method)
+        _LOGGER.debug("AJAX request: POST %s [handler=%s, method=%s]", url, handler, method)
         _LOGGER.debug("AJAX request payload: %s", requests_payload)
-        _LOGGER.debug("Using PHPSESSID: %s...", self._phpsessid[:10] if self._phpsessid else "None")
+        _LOGGER.debug("PHPSESSID present: %s", bool(self._phpsessid))
 
         try:
-            # Make request with explicit cookie header
             async with self.session.post(url, headers=headers, cookies=cookies, data=data) as response:
-                _LOGGER.info("HTTP RESPONSE: %s %s -> %s", "POST", url, response.status)
-                _LOGGER.debug("AJAX response status: %s, content-type: %s", response.status, response.headers.get('Content-Type', 'unknown'))
+                _LOGGER.debug(
+                    "EVC-net API: %s.%s -> %s",
+                    handler.split("\\")[-1] if "\\" in handler else handler,
+                    method,
+                    response.status,
+                )
+                _LOGGER.debug("AJAX response: POST %s -> %s", url, response.status)
+                _LOGGER.debug("Response content-type: %s", response.headers.get("Content-Type", "unknown"))
                 # Check content type before trying to parse JSON
                 content_type = response.headers.get('Content-Type', '')
 
@@ -234,7 +262,11 @@ class EvcNetApiClient:
 
                 elif response.status in [401, 302]:
                     # Session expired, re-authenticate
-                    _LOGGER.info("Session expired (status %s), re-authenticating (retry %d)", response.status, _retry_count)
+                    _LOGGER.info(
+                        "Session expired (status %s), re-authenticating (retry %d)",
+                        response.status,
+                        _retry_count,
+                    )
                     self._is_authenticated = False
                     if await self.authenticate():
                         # Retry the request with incremented counter
