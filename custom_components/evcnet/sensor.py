@@ -390,7 +390,7 @@ async def async_setup_entry(
         detected_channels = coordinator.spot_channels.get(str(spot_id), 1)
         # Use the larger of max_channels setting and detected channels
         effective_max = max(getattr(coordinator, "max_channels", 1), detected_channels)
-        
+
         # If only one channel, use legacy sensors (original naming)
         if effective_max == 1:
             for description in SENSOR_TYPES:
@@ -413,6 +413,9 @@ async def async_setup_entry(
 
 class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
     """Representation of a EVC-net sensor."""
+
+    # Exclude large log attributes from Recorder (available at runtime for UI only)
+    _unrecorded_attributes = frozenset({"log_entries", "log_rows", "log_markdown"})
 
     entity_description: EvcNetSensorEntityDescription
 
@@ -500,15 +503,24 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
         if spot_info.get("CUSTOMER_NAME"):
             attributes["customer_name"] = spot_info.get("CUSTOMER_NAME")
 
-        # Only include log details for log sensors to avoid bloating attributes on all entities
-        if self.entity_description.key.startswith("last_log") or self.entity_description.key == "log_summary":
+        # Log summary: only entity with full log data (for markdown card); not stored in Recorder
+        if self.entity_description.key == "log_summary":
+            log_entries = extract_log_entries(spot_data)
+            if log_entries:
+                attributes.update(
+                    {
+                        "log_entries": log_entries,
+                        "log_rows": summarize_log_rows(log_entries),
+                        "log_markdown": self._format_log_as_markdown(log_entries),
+                    }
+                )
+        # Last log sensors: only latest-entry fields (no full list/markdown)
+        elif self.entity_description.key.startswith("last_log"):
             log_entries = extract_log_entries(spot_data)
             if log_entries:
                 latest = log_entries[0]
                 attributes.update(
                     {
-                        "log_entries": log_entries,
-                        "log_rows": summarize_log_rows(log_entries),
                         "log_date": latest.get("LOG_DATE"),
                         "log_notification": latest.get("NOTIFICATION"),
                         "log_event_type": latest.get("EVENT_TYPE"),
@@ -519,8 +531,6 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
                         "log_transaction_time": latest.get("TRANSACTION_TIME_H_M"),
                         "log_customer_name": latest.get("CUSTOMER_NAME"),
                         "log_card_id": latest.get("CARDID"),
-                        # Provide a readable summary table as Markdown
-                        "log_markdown": self._format_log_as_markdown(log_entries),
                     }
                 )
 
@@ -532,7 +542,6 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
         rows: list[str] = []
         header = "| Date | Notification | Power (kW) | Energy (kWh) | Time | Card | Client | Details |\n|---|---|---:|---:|---|---|---|---|"
         rows.append(header)
-
         for entry in entries[:max_rows]:
             date = entry.get("LOG_DATE") or ""
             note = entry.get("NOTIFICATION") or ""
@@ -554,6 +563,9 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
 
 class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
     """Representation of a channel-specific EVC-net sensor."""
+
+    # Exclude large log attributes from Recorder (available at runtime for UI only)
+    _unrecorded_attributes = frozenset({"log_entries", "log_rows", "log_markdown"})
 
     entity_description: EvcNetSensorEntityDescription
 
@@ -649,15 +661,24 @@ class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
             "network_type": spot_info.get("NETWORK_TYPE"),
         }
 
-        # Only include log details for log sensors
-        if self.entity_description.key.startswith("last_log") or self.entity_description.key == "log_summary":
+        # Log summary: only entity with full log data (for markdown card); not stored in Recorder
+        if self.entity_description.key == "log_summary":
+            log_entries = extract_log_entries(ch_data)
+            if log_entries:
+                attributes.update(
+                    {
+                        "log_entries": log_entries,
+                        "log_rows": summarize_log_rows(log_entries),
+                        "log_markdown": self._format_log_as_markdown(log_entries),
+                    }
+                )
+        # Last log sensors: only latest-entry fields (no full list/markdown)
+        elif self.entity_description.key.startswith("last_log"):
             log_entries = extract_log_entries(ch_data)
             if log_entries:
                 latest = log_entries[0]
                 attributes.update(
                     {
-                        "log_entries": log_entries,
-                        "log_rows": summarize_log_rows(log_entries),
                         "log_date": latest.get("LOG_DATE"),
                         "log_notification": latest.get("NOTIFICATION"),
                         "log_event_type": latest.get("EVENT_TYPE"),
@@ -668,7 +689,6 @@ class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
                         "log_transaction_time": latest.get("TRANSACTION_TIME_H_M"),
                         "log_customer_name": latest.get("CUSTOMER_NAME"),
                         "log_card_id": latest.get("CARDID"),
-                        "log_markdown": self._format_log_as_markdown(log_entries),
                     }
                 )
 
