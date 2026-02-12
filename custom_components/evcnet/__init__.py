@@ -22,49 +22,59 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BUTTON]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
+def _resolve_evcnet_entity(
+    hass: HomeAssistant,
+    entity_id: str,
+    expected_domain: str,
+    unique_id_suffix: str | None = None,
+) -> tuple[EvcNetCoordinator, er.RegistryEntry, Any] | None:
+    """Resolve entity_id to coordinator, entity registry entry, and entity instance (for switches).
+
+    Returns (coordinator, entity_entry, resolved_entity) or None if the entity is not
+    valid for this integration. resolved_entity is None for button domain; for switch
+    domain it is the entity from coordinator.entities when available.
+    """
+    if not entity_id.startswith(f"{expected_domain}."):
+        return None
+    entity_registry = er.async_get(hass)
+    entity_entry = entity_registry.async_get(entity_id)
+    if not entity_entry:
+        _LOGGER.error("Entity %s not found", entity_id)
+        return None
+    config_entry_id = entity_entry.config_entry_id
+    if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
+        _LOGGER.error("Could not find coordinator for entity %s", entity_id)
+        return None
+    coordinator = hass.data[DOMAIN][config_entry_id]
+    unique_id = entity_entry.unique_id
+    if unique_id_suffix and (not unique_id or not unique_id.endswith(unique_id_suffix)):
+        _LOGGER.debug("Skipping entity %s (wrong type): %s", entity_id, unique_id)
+        return None
+    resolved_entity = None
+    if expected_domain == "switch":
+        resolved_entity = getattr(coordinator, "entities", {}).get(unique_id)
+    return (coordinator, entity_entry, resolved_entity)
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up is called when Home Assistant is loading our component."""
 
     async def async_handle_refresh_status(call: ServiceCall) -> None:
         """Handle the refresh_status action call."""
         entity_ids = await service.async_extract_entity_ids(call)
-
         if not entity_ids:
             _LOGGER.error(
-                "Action refresh_status requires entity_id. "
-                "Received call data: %s",
-                call.data
+                "Action refresh_status requires entity_id. Received call data: %s",
+                call.data,
             )
             return
-
-        # Process each entity
         for entity_id in entity_ids:
-            # Only process button entities
-            if not entity_id.startswith("button."):
+            resolved = _resolve_evcnet_entity(
+                hass, entity_id, "button", unique_id_suffix="_refresh_status"
+            )
+            if not resolved:
                 continue
-
-            # Get the entity registry to find which config entry this entity belongs to
-            entity_registry = er.async_get(hass)
-            entity_entry = entity_registry.async_get(entity_id)
-
-            if not entity_entry:
-                _LOGGER.error("Entity %s not found", entity_id)
-                continue
-
-            # Find the coordinator for this entity's config entry
-            config_entry_id = entity_entry.config_entry_id
-            if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
-                _LOGGER.error("Could not find coordinator for entity %s", entity_id)
-                continue
-
-            coordinator = hass.data[DOMAIN][config_entry_id]
-
-            # Extract spot_id from unique_id (format: {spot_id}_refresh_status)
-            unique_id = entity_entry.unique_id
-            if not unique_id or not unique_id.endswith("_refresh_status"):
-                _LOGGER.debug("Skipping entity %s (not a refresh status button): %s", entity_id, unique_id)
-                continue
-
+            coordinator, _entry, _entity = resolved
             try:
                 _LOGGER.info("Manually refreshing status via service call for entity %s", entity_id)
                 await coordinator.async_request_refresh()
@@ -73,166 +83,89 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def async_handle_start_charging(call: ServiceCall) -> None:
         """Handle the start_charging action call."""
-        # Use service helper to expand target (handles services.yaml target resolution)
-        # This properly expands entity_id from target, device, area, etc.
         entity_ids = await service.async_extract_entity_ids(call)
-
-        card_id = call.data.get("card_id")
-
         if not entity_ids:
             _LOGGER.error(
-                "Action start_charging requires entity_id. "
-                "Received call data: %s",
-                call.data
+                "Action start_charging requires entity_id. Received call data: %s",
+                call.data,
             )
             return
-
-        # Process each entity
+        card_id = call.data.get("card_id")
         for entity_id in entity_ids:
-            # Only process switch entities (ignore sensors when device/area is selected)
-            if not entity_id.startswith("switch."):
+            resolved = _resolve_evcnet_entity(
+                hass, entity_id, "switch", unique_id_suffix="_charging"
+            )
+            if not resolved:
                 continue
-
-            # Get the entity registry to find which config entry this entity belongs to
-            entity_registry = er.async_get(hass)
-            entity_entry = entity_registry.async_get(entity_id)
-
-            if not entity_entry:
-                _LOGGER.error("Entity %s not found", entity_id)
-                continue
-
-            # Find the coordinator for this entity's config entry
-            config_entry_id = entity_entry.config_entry_id
-            if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
-                _LOGGER.error("Could not find coordinator for entity %s", entity_id)
-                continue
-
-            coordinator = hass.data[DOMAIN][config_entry_id]
-
-            # Extract spot_id from unique_id (format: {spot_id}_charging)
-            unique_id = entity_entry.unique_id
-            if not unique_id or not unique_id.endswith("_charging"):
-                _LOGGER.debug("Skipping entity %s (not a charging switch): %s", entity_id, unique_id)
-                continue
-
-            # Get the entity from stored references
-            entities_dict = getattr(coordinator, "entities", {})
-            switch_entity = entities_dict.get(unique_id)
-
-            if switch_entity and hasattr(switch_entity, 'async_turn_on'):
-                # Call the entity's method directly with card_id
+            _coordinator, _entry, switch_entity = resolved
+            if switch_entity and hasattr(switch_entity, "async_turn_on"):
                 await switch_entity.async_turn_on(card_id=card_id)
             else:
-                _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
+                _LOGGER.error(
+                    "Could not find switch entity %s (unique_id: %s)",
+                    entity_id,
+                    _entry.unique_id,
+                )
 
     async def async_handle_stop_charging(call: ServiceCall) -> None:
         """Handle the stop_charging action call."""
         entity_ids = await service.async_extract_entity_ids(call)
-
         if not entity_ids:
             _LOGGER.error(
-                "Action stop_charging requires entity_id. "
-                "Received call data: %s",
-                call.data
+                "Action stop_charging requires entity_id. Received call data: %s",
+                call.data,
             )
             return
-
-        # Process each entity
         for entity_id in entity_ids:
-            # Only process switch entities (ignore sensors when device/area is selected)
-            if not entity_id.startswith("switch."):
+            resolved = _resolve_evcnet_entity(
+                hass, entity_id, "switch", unique_id_suffix="_charging"
+            )
+            if not resolved:
                 continue
-
-            # Get the entity registry to find which config entry this entity belongs to
-            entity_registry = er.async_get(hass)
-            entity_entry = entity_registry.async_get(entity_id)
-
-            if not entity_entry:
-                _LOGGER.error("Entity %s not found", entity_id)
-                continue
-
-            # Find the coordinator for this entity's config entry
-            config_entry_id = entity_entry.config_entry_id
-            if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
-                _LOGGER.error("Could not find coordinator for entity %s", entity_id)
-                continue
-
-            coordinator = hass.data[DOMAIN][config_entry_id]
-
-            # Extract spot_id from unique_id (format: {spot_id}_charging)
-            unique_id = entity_entry.unique_id
-            if not unique_id or not unique_id.endswith("_charging"):
-                _LOGGER.debug("Skipping entity %s (not a charging switch): %s", entity_id, unique_id)
-                continue
-
-            # Get the entity from stored references
-            entities_dict = getattr(coordinator, "entities", {})
-            switch_entity = entities_dict.get(unique_id)
-
-            if switch_entity and hasattr(switch_entity, 'async_turn_off'):
-                # Call the entity's method directly
+            _coordinator, _entry, switch_entity = resolved
+            if switch_entity and hasattr(switch_entity, "async_turn_off"):
                 await switch_entity.async_turn_off()
             else:
-                _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
+                _LOGGER.error(
+                    "Could not find switch entity %s (unique_id: %s)",
+                    entity_id,
+                    _entry.unique_id,
+                )
 
     async def async_handle_charging_action(call: ServiceCall, action_name: str) -> None:
         """Handle charging station actions (soft_reset, hard_reset, unlock_connector, block, unblock)."""
         entity_ids = await service.async_extract_entity_ids(call)
-
         if not entity_ids:
             _LOGGER.error(
                 "Action %s requires entity_id. Received call data: %s",
                 action_name,
-                call.data
+                call.data,
             )
             return
-
-        # Process each entity
         for entity_id in entity_ids:
-            # Only process switch entities
-            if not entity_id.startswith("switch."):
+            resolved = _resolve_evcnet_entity(hass, entity_id, "switch")
+            if not resolved:
                 continue
-
-            # Get the entity registry to find which config entry this entity belongs to
-            entity_registry = er.async_get(hass)
-            entity_entry = entity_registry.async_get(entity_id)
-
-            if not entity_entry:
-                _LOGGER.error("Entity %s not found", entity_id)
-                continue
-
-            # Find the coordinator for this entity's config entry
-            config_entry_id = entity_entry.config_entry_id
-            if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
-                _LOGGER.error("Could not find coordinator for entity %s", entity_id)
-                continue
-
-            coordinator = hass.data[DOMAIN][config_entry_id]
-
-            # Determine spot and channel from the stored entity reference
-            unique_id = entity_entry.unique_id
-            entities_dict = getattr(coordinator, "entities", {})
-            switch_entity = entities_dict.get(unique_id)
-
+            coordinator, _entry, switch_entity = resolved
             if not switch_entity:
-                _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
+                _LOGGER.error(
+                    "Could not find switch entity %s (unique_id: %s)",
+                    entity_id,
+                    _entry.unique_id,
+                )
                 continue
-
             spot_id = getattr(switch_entity, "_spot_id", None)
             if spot_id is None:
-                _LOGGER.error("Switch entity missing spot_id: %s", unique_id)
+                _LOGGER.error("Switch entity missing spot_id: %s", _entry.unique_id)
                 continue
-
-            # Prefer the entity's channel override when present; fallback to spot info
             spot_data = coordinator.data.get(spot_id, {})
             spot_info = spot_data.get("info", {})
             channel_override = getattr(switch_entity, "_channel_override", None)
             channel = str(channel_override or spot_info.get("CHANNEL", "1"))
-
             try:
-                _LOGGER.info("Performing %s on spot %s, channel %s", action_name, spot_id, channel)
-
-                # Call the appropriate API method
+                _LOGGER.info(
+                    "Performing %s on spot %s, channel %s", action_name, spot_id, channel
+                )
                 if action_name == "soft_reset":
                     await coordinator.client.soft_reset(spot_id, channel)
                 elif action_name == "hard_reset":
@@ -243,16 +176,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     await coordinator.client.block(spot_id, channel)
                 elif action_name == "unblock":
                     await coordinator.client.unblock(spot_id, channel)
-
-                # Wait for the action to take effect
                 await asyncio.sleep(3)
-
-                # Refresh coordinator data
                 await coordinator.async_request_refresh()
-
             except Exception as err:
-                _LOGGER.error("Failed to perform %s: %s", action_name, err, exc_info=True)
-                # Force refresh even on error
+                _LOGGER.error(
+                    "Failed to perform %s: %s", action_name, err, exc_info=True
+                )
                 await coordinator.async_request_refresh()
 
     # Register the actions - Home Assistant will load schema from services.yaml
