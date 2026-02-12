@@ -106,17 +106,13 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
             )
 
     def _extract_card_id_from_data(self) -> None:
-        """Extract card_id from coordinator data."""
+        """Extract card_id from coordinator data (from this switch's channel)."""
         spot_data = self.coordinator.data.get(self._spot_id, {})
-        status = spot_data.get("status", [])
+        status_info = self._get_status_info_for_channel(spot_data)
 
-        if self._is_valid_status_data(status):
-            status_info = status[0][0]
-
-            # Only auto-detect if not already set from config
-            if not self._card_id and "CARDID" in status_info and status_info["CARDID"]:
-                self._card_id = status_info["CARDID"]
-                _LOGGER.info("Auto-detected card_id: %s for spot %s", self._card_id, self._spot_id)
+        if status_info and not self._card_id and "CARDID" in status_info and status_info["CARDID"]:
+            self._card_id = status_info["CARDID"]
+            _LOGGER.info("Auto-detected card_id: %s for spot %s", self._card_id, self._spot_id)
 
     def _is_valid_status_data(self, status: list) -> bool:
         """Validate status data structure."""
@@ -124,6 +120,20 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
                 len(status) > 0 and
                 isinstance(status[0], list) and
                 len(status[0]) > 0)
+
+    def _get_status_info_for_channel(self, spot_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Return the status info dict for this switch's channel, or None if not available.
+
+        status[0] is the list of channels (index 0 = channel 1, index 1 = channel 2).
+        """
+        status = spot_data.get("status", [])
+        if not self._is_valid_status_data(status):
+            return None
+        channel_index = (self._channel_override or 1) - 1
+        channels_list = status[0]
+        if channel_index < 0 or channel_index >= len(channels_list):
+            return None
+        return channels_list[channel_index]
 
     def _parse_status_flags(self, status_value: int) -> tuple[int, int]:
         """Parse status value into two 32-bit integers."""
@@ -155,18 +165,17 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return true if charging is active."""
+        """Return true if charging is active for this channel."""
         # Try to extract card_id from current data if not in config
         if not self._card_id:
             self._extract_card_id_from_data()
 
         spot_data = self.coordinator.data.get(self._spot_id, {})
-        status = spot_data.get("status", [])
+        status_info = self._get_status_info_for_channel(spot_data)
 
-        if not self._is_valid_status_data(status):
+        if not status_info:
             return False
 
-        status_info = status[0][0]
         status_value = status_info.get("STATUS")
 
         if status_value is None:
@@ -279,14 +288,9 @@ class EvcNetChargingSwitch(CoordinatorEntity[EvcNetCoordinator], SwitchEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
+        """Return additional state attributes for this channel."""
         spot_data = self.coordinator.data.get(self._spot_id, {})
-
-        # Try to get more details from status
-        status = spot_data.get("status", [])
-        status_info = {}
-        if self._is_valid_status_data(status):
-            status_info = status[0][0]
+        status_info = self._get_status_info_for_channel(spot_data) or {}
 
         attributes = {
             "spot_id": self._spot_id,
