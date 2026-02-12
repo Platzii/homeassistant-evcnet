@@ -6,15 +6,15 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 
 **Important Notice**: This integration was developed with the assistance of AI tools, as I have little to no prior experience with Python or Home Assistant integration development. While the code has been tested and appears to function correctly, please use it at your own discretion and report any issues you encounter.
 
-**Testing Environment**: This integration has been primarily tested on the 50five (BELUX) endpoint (`50five-sbelux.evc-net.com`) in combination with a Shell Recharge/NewMotion-Enovates EV charger (Home Advanced 3.0). Compatibility with other EVC-net endpoints or charging station models may vary. Users have confirmed that the 50five Germany (`50five-sde.evc-net.com`) and UK (`50five-suk.evc-net.com`) endpoints work as well.
+**Testing Environment**: This integration has been primarily tested on the 50five (BELUX) endpoint (`50five-sbelux.evc-net.com`) in combination with a Shell Recharge/NewMotion-Enovates EV charger (Home Advanced 3.0). Compatibility with other EVC-net endpoints or charging station models may vary. Users have confirmed that the 50five Germany (`50five-sde.evc-net.com`), 50five UK (`50five-suk.evc-net.com`), 50five (`50five.evc-net.com`) and 50five NL (`50five-snl.evc-net.com`) endpoints work as well.
 
 ## Features
 
 - **Sensors**: Monitor charging status, power consumption, and energy usage
 - **Switch**: Start and stop charging sessions
-- **Buttons**: Control charging station operations (soft/hard reset, unlock connector, block/unblock)
+- **Buttons**: Control charging station operations (soft/hard reset, unlock connector, block/unblock, refresh status)
 - **Real-time updates**: Automatic polling every 30 seconds
-- **Action call**: Start a charging session using an action (allows to define a specific RFID card)
+- **Action calls**: Start/stop a charging session using an action (allows to define a specific RFID card), reset, unlock connector, block/unblock is also available.
 
 ## Installation
 
@@ -53,6 +53,14 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 5. (Optional) Configure your RFID card ID:
    - **RFID Card ID**: Your charging card ID (e.g., `ABC12DEF34`)
    - **Customer ID**: Your customer ID (usually optional)
+
+A list of known base URLs are:
+
+- 50five: `https://50five.evc-net.com`
+- 50five Germany: `https://50five-sde.evc-net.com`
+- 50five UK: `https://50five-suk.evc-net.com`
+- 50five NL: `https://50five-snl.evc-net.com`
+- 50five Belgium: `https://50five-sbelux.evc-net.com`
 
 ### Finding Your Card ID
 
@@ -112,6 +120,36 @@ data:
 ```
 
 **Note**: If you don't specify a `card_id` in the action, the integration will use the default card configured in the integration settings.
+
+Other options are:
+
+```yaml
+action: evcnet.stop_charging
+```
+
+```yaml
+action: evcnet.soft_reset
+```
+
+```yaml
+action: evcnet.hard_reset
+```
+
+```yaml
+action: evcnet.unlock_connector
+```
+
+```yaml
+action: evcnet.block
+```
+
+```yaml
+action: evcnet.unblock
+```
+
+```yaml
+action: evcnet.refresh_status
+```
 
 ## Configuration Options
 

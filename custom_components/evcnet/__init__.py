@@ -11,7 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .api import EvcNetApiClient
-from .const import CONF_BASE_URL, DOMAIN
+from .const import CONF_BASE_URL, DOMAIN, CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS
 from .coordinator import EvcNetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,6 +24,52 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up is called when Home Assistant is loading our component."""
+
+    async def async_handle_refresh_status(call: ServiceCall) -> None:
+        """Handle the refresh_status action call."""
+        entity_ids = await service.async_extract_entity_ids(call)
+
+        if not entity_ids:
+            _LOGGER.error(
+                "Action refresh_status requires entity_id. "
+                "Received call data: %s",
+                call.data
+            )
+            return
+
+        # Process each entity
+        for entity_id in entity_ids:
+            # Only process button entities
+            if not entity_id.startswith("button."):
+                continue
+
+            # Get the entity registry to find which config entry this entity belongs to
+            entity_registry = er.async_get(hass)
+            entity_entry = entity_registry.async_get(entity_id)
+
+            if not entity_entry:
+                _LOGGER.error("Entity %s not found", entity_id)
+                continue
+
+            # Find the coordinator for this entity's config entry
+            config_entry_id = entity_entry.config_entry_id
+            if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
+                _LOGGER.error("Could not find coordinator for entity %s", entity_id)
+                continue
+
+            coordinator = hass.data[DOMAIN][config_entry_id]
+
+            # Extract spot_id from unique_id (format: {spot_id}_refresh_status)
+            unique_id = entity_entry.unique_id
+            if not unique_id or not unique_id.endswith("_refresh_status"):
+                _LOGGER.debug("Skipping entity %s (not a refresh status button): %s", entity_id, unique_id)
+                continue
+
+            try:
+                _LOGGER.info("Manually refreshing status via service call for entity %s", entity_id)
+                await coordinator.async_request_refresh()
+            except Exception as err:
+                _LOGGER.error("Failed to refresh status: %s", err, exc_info=True)
 
     async def async_handle_start_charging(call: ServiceCall) -> None:
         """Handle the start_charging action call."""
@@ -79,6 +125,56 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             else:
                 _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
 
+    async def async_handle_stop_charging(call: ServiceCall) -> None:
+        """Handle the stop_charging action call."""
+        entity_ids = await service.async_extract_entity_ids(call)
+
+        if not entity_ids:
+            _LOGGER.error(
+                "Action stop_charging requires entity_id. "
+                "Received call data: %s",
+                call.data
+            )
+            return
+
+        # Process each entity
+        for entity_id in entity_ids:
+            # Only process switch entities (ignore sensors when device/area is selected)
+            if not entity_id.startswith("switch."):
+                continue
+
+            # Get the entity registry to find which config entry this entity belongs to
+            entity_registry = er.async_get(hass)
+            entity_entry = entity_registry.async_get(entity_id)
+
+            if not entity_entry:
+                _LOGGER.error("Entity %s not found", entity_id)
+                continue
+
+            # Find the coordinator for this entity's config entry
+            config_entry_id = entity_entry.config_entry_id
+            if not config_entry_id or config_entry_id not in hass.data.get(DOMAIN, {}):
+                _LOGGER.error("Could not find coordinator for entity %s", entity_id)
+                continue
+
+            coordinator = hass.data[DOMAIN][config_entry_id]
+
+            # Extract spot_id from unique_id (format: {spot_id}_charging)
+            unique_id = entity_entry.unique_id
+            if not unique_id or not unique_id.endswith("_charging"):
+                _LOGGER.debug("Skipping entity %s (not a charging switch): %s", entity_id, unique_id)
+                continue
+
+            # Get the entity from stored references
+            entities_dict = getattr(coordinator, "entities", {})
+            switch_entity = entities_dict.get(unique_id)
+
+            if switch_entity and hasattr(switch_entity, 'async_turn_off'):
+                # Call the entity's method directly
+                await switch_entity.async_turn_off()
+            else:
+                _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
+
     async def async_handle_charging_action(call: ServiceCall, action_name: str) -> None:
         """Handle charging station actions (soft_reset, hard_reset, unlock_connector, block, unblock)."""
         entity_ids = await service.async_extract_entity_ids(call)
@@ -113,18 +209,25 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
             coordinator = hass.data[DOMAIN][config_entry_id]
 
-            # Extract spot_id from unique_id (format: {spot_id}_charging)
+            # Determine spot and channel from the stored entity reference
             unique_id = entity_entry.unique_id
-            if not unique_id or not unique_id.endswith("_charging"):
-                _LOGGER.debug("Skipping entity %s (not a charging switch): %s", entity_id, unique_id)
+            entities_dict = getattr(coordinator, "entities", {})
+            switch_entity = entities_dict.get(unique_id)
+
+            if not switch_entity:
+                _LOGGER.error("Could not find switch entity %s (unique_id: %s)", entity_id, unique_id)
                 continue
 
-            spot_id = unique_id.replace("_charging", "")
+            spot_id = getattr(switch_entity, "_spot_id", None)
+            if spot_id is None:
+                _LOGGER.error("Switch entity missing spot_id: %s", unique_id)
+                continue
 
-            # Get channel from coordinator data
+            # Prefer the entity's channel override when present; fallback to spot info
             spot_data = coordinator.data.get(spot_id, {})
             spot_info = spot_data.get("info", {})
-            channel = str(spot_info.get("CHANNEL", "1"))
+            channel_override = getattr(switch_entity, "_channel_override", None)
+            channel = str(channel_override or spot_info.get("CHANNEL", "1"))
 
             try:
                 _LOGGER.info("Performing %s on spot %s, channel %s", action_name, spot_id, channel)
@@ -155,8 +258,20 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Register the actions - Home Assistant will load schema from services.yaml
     hass.services.async_register(
         DOMAIN,
+        "refresh_status",
+        async_handle_refresh_status,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
         "start_charging",
         async_handle_start_charging,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "stop_charging",
+        async_handle_stop_charging,
     )
 
     hass.services.async_register(
@@ -216,7 +331,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session,
     )
 
-    coordinator = EvcNetCoordinator(hass, client)
+    # Read max channels from options; default to DEFAULT_MAX_CHANNELS
+    max_channels = int(entry.options.get(CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS))
+    coordinator = EvcNetCoordinator(hass, client, max_channels=max_channels)
 
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()
@@ -225,7 +342,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Listen for options updates
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
     return True
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the config entry when it's updated."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
