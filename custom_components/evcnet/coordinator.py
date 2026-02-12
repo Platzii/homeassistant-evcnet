@@ -93,14 +93,9 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 ch_str,
                                 log_err,
                             )
-                            # Preserve previous channel log if available
-                            ch_log = (
-                                self.data.get(spot_id, {})
-                                .get("channels", {})
-                                .get(ch, {})
-                                .get("log", [])
-                                if self.data else []
-                            )
+                            # Keep previous channel log so channels structure stays valid
+                            existing = (self.data or {}).get(spot_id, {})
+                            ch_log = existing.get("channels", {}).get(ch, {}).get("log", [])
                         channels[ch] = {"log": ch_log}
 
                     # Keep top-level 'log' for backwards compatibility (channel 1)
