@@ -248,6 +248,26 @@ def convert_energy_to_kwh(value: float, unit: str) -> float:
         return 0.0
 
 
+def _get_channel_status_info(spot_data: dict[str, Any], channel: int) -> dict[str, Any] | None:
+    """Return the status dict for the given channel (1-based) from spot_data, or None.
+
+    status[0] is the list of channels (index 0 = channel 1, index 1 = channel 2).
+    """
+    status = spot_data.get("status", [])
+    if not (
+        isinstance(status, list)
+        and len(status) > 0
+        and isinstance(status[0], list)
+        and len(status[0]) > 0
+    ):
+        return None
+    channel_index = channel - 1
+    channels_list = status[0]
+    if channel_index < 0 or channel_index >= len(channels_list):
+        return None
+    return channels_list[channel_index]
+
+
 def get_total_energy_usage_kwh(data: dict) -> float:
     """Extract total energy usage and convert to kWh, handling dynamic units."""
     number = get_nested_value(data, "total_energy_usage", 0, "number", default=0)
@@ -563,12 +583,15 @@ class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        """Return the state of the channel-specific sensor."""
+        """Return the state of the channel-specific sensor.
+
+        Live values (current_power, session_energy, session_time, status,
+        status_code) come from the API status for this channel. Log-only
+        sensors (last_log_*, log_summary) use channel log data.
+        """
         spot_data = self.coordinator.data.get(self._spot_id, {})
-        ch_data = (
-            spot_data.get("channels", {}).get(self._channel, {})
-        )
-        # For values driven by logs, use the latest log entry for this channel
+        ch_data = spot_data.get("channels", {}).get(self._channel, {})
+        status_info = _get_channel_status_info(spot_data, self._channel)
         latest = None
         try:
             latest = latest_log_entry(ch_data)
@@ -578,17 +601,25 @@ class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
         key = self.entity_description.key
 
         if key == "current_power":
-            val = (latest and latest.get("MOM_POWER_KW")) or 0
+            if not status_info:
+                return 0
+            val = status_info.get("MOM_POWER_KW") or 0
             return parse_locale_number(val, default=0.0) if isinstance(val, str) else val
         if key == "session_energy":
-            val = (latest and latest.get("TRANS_ENERGY_DELIVERED_KWH")) or 0
+            if not status_info:
+                return 0
+            val = status_info.get("TRANS_ENERGY_DELIVERED_KWH") or 0
             return parse_locale_number(val, default=0.0) if isinstance(val, str) else val
         if key == "session_time":
-            return convert_time_to_decimal_hours((latest and latest.get("TRANSACTION_TIME_H_M")) or "")
+            if not status_info:
+                return 0.0
+            return convert_time_to_decimal_hours(
+                status_info.get("TRANSACTION_TIME_H_M") or ""
+            )
         if key == "status":
-            return (latest and latest.get("NOTIFICATION")) or None
+            return (status_info and status_info.get("NOTIFICATION")) or None
         if key == "status_code":
-            return (latest and latest.get("STATUS")) or None
+            return (status_info and status_info.get("STATUS")) or None
         if key == "last_log_notification":
             return (latest and latest.get("NOTIFICATION")) or None
         if key == "last_log_time":
@@ -596,12 +627,10 @@ class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
         if key == "log_summary":
             return len(extract_log_entries(ch_data))
         if key == "energy_usage":
-            # Total energy usage is spot-wide; reuse existing logic
             return get_total_energy_usage_kwh(spot_data)
         if key == "software_version":
             return get_nested_value(spot_data, "info", "SOFTWARE_VERSION", default="Unknown")
 
-        # Fallback to None if not matched
         return None
 
     @property
