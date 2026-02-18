@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.0.1] - 2026-02-19
 
 ### Fixed
 - **Refresh status**: The Refresh Status button and `evcnet.refresh_status` service now call the portal GetStatus API before refreshing data; previously they only triggered a coordinator refresh and did not request fresh status from the charger.
