@@ -370,6 +370,22 @@ class EvcNetApiClient:
 
         return await self._make_ajax_request(requests_payload)
 
+    async def get_status(self, recharge_spot_id: str) -> dict[str, Any]:
+        """Request fresh status from the charging spot (GetStatus action)."""
+        requests_payload = {
+            "0": {
+                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
+                "method": "action",
+                "params": {
+                    "action": "GetStatus",
+                    "rechargeSpotId": recharge_spot_id,
+                    "clickedButtonId": 1,
+                },
+            }
+        }
+
+        return await self._make_ajax_request(requests_payload)
+
     async def soft_reset(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
         """Perform a soft reset on a charging station."""
         requests_payload = {

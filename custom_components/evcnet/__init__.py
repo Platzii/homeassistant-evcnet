@@ -65,28 +65,6 @@ def _resolve_evcnet_entity(
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up is called when Home Assistant is loading our component."""
 
-    async def async_handle_refresh_status(call: ServiceCall) -> None:
-        """Handle the refresh_status action call."""
-        entity_ids = await service.async_extract_entity_ids(call)
-        if not entity_ids:
-            _LOGGER.error(
-                "Action refresh_status requires entity_id. Received call data: %s",
-                call.data,
-            )
-            return
-        for entity_id in entity_ids:
-            resolved = _resolve_evcnet_entity(
-                hass, entity_id, "button", unique_id_suffix="_refresh_status"
-            )
-            if not resolved:
-                continue
-            coordinator, _entry, _entity = resolved
-            try:
-                _LOGGER.info("Manually refreshing status via service call for entity %s", entity_id)
-                await coordinator.async_request_refresh()
-            except Exception as err:
-                _LOGGER.error("Failed to refresh status: %s", err, exc_info=True)
-
     async def async_handle_start_charging(call: ServiceCall) -> None:
         """Handle the start_charging action call."""
         entity_ids = await service.async_extract_entity_ids(call)
@@ -139,7 +117,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 )
 
     async def async_handle_charging_action(call: ServiceCall, action_name: str) -> None:
-        """Handle charging station actions (soft_reset, hard_reset, unlock_connector, block, unblock)."""
+        """Handle charging station actions (refresh_status, soft_reset, hard_reset, unlock_connector, block, unblock)."""
         entity_ids = await service.async_extract_entity_ids(call)
         if not entity_ids:
             _LOGGER.error(
@@ -170,9 +148,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             channel = str(channel_override or spot_info.get("CHANNEL", "1"))
             try:
                 _LOGGER.info(
-                    "Performing %s on spot %s, channel %s", action_name, spot_id, channel
+                    "Performing %s on spot %s%s",
+                    action_name,
+                    spot_id,
+                    f", channel {channel}" if action_name != "refresh_status" else "",
                 )
-                if action_name == "soft_reset":
+                if action_name == "refresh_status":
+                    await coordinator.client.get_status(spot_id)
+                elif action_name == "soft_reset":
                     await coordinator.client.soft_reset(spot_id, channel)
                 elif action_name == "hard_reset":
                     await coordinator.client.hard_reset(spot_id, channel)
@@ -190,13 +173,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 )
                 await coordinator.async_request_refresh()
 
-    # Register the actions - Home Assistant will load schema from services.yaml
-    hass.services.async_register(
-        DOMAIN,
-        "refresh_status",
-        async_handle_refresh_status,
-    )
+    def _charging_action_handler(action_name: str):
+        """Return an async service handler that awaits async_handle_charging_action."""
+        async def handler(call: ServiceCall) -> None:
+            await async_handle_charging_action(call, action_name)
+        return handler
 
+    # Register the actions - Home Assistant will load schema from services.yaml
     hass.services.async_register(
         DOMAIN,
         "start_charging",
@@ -211,32 +194,38 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     hass.services.async_register(
         DOMAIN,
+        "refresh_status",
+        _charging_action_handler("refresh_status"),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
         "soft_reset",
-        lambda call: async_handle_charging_action(call, "soft_reset"),
+        _charging_action_handler("soft_reset"),
     )
 
     hass.services.async_register(
         DOMAIN,
         "hard_reset",
-        lambda call: async_handle_charging_action(call, "hard_reset"),
+        _charging_action_handler("hard_reset"),
     )
 
     hass.services.async_register(
         DOMAIN,
         "unlock_connector",
-        lambda call: async_handle_charging_action(call, "unlock_connector"),
+        _charging_action_handler("unlock_connector"),
     )
 
     hass.services.async_register(
         DOMAIN,
         "block",
-        lambda call: async_handle_charging_action(call, "block"),
+        _charging_action_handler("block"),
     )
 
     hass.services.async_register(
         DOMAIN,
         "unblock",
-        lambda call: async_handle_charging_action(call, "unblock"),
+        _charging_action_handler("unblock"),
     )
 
     return True

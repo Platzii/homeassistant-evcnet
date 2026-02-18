@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Refresh status**: The Refresh Status button and `evcnet.refresh_status` service now call the portal GetStatus API before refreshing data; previously they only triggered a coordinator refresh and did not request fresh status from the charger.
+- Action services (refresh_status, soft_reset, hard_reset, etc.) are now registered with proper async handlers so the service calls are correctly awaited (fixes "coroutine was never awaited" warning in logs).
+
+### Changed
+- Refresh Status button now uses the same base class and execution flow as the other action buttons (API call, settle delay, coordinator refresh).
+
 ## [1.0.0] - 2026-02-12
 
 This release introduces multi-channel support and is versioned 1.0.0 to reflect the impact for users with multi-connector charging stations.
