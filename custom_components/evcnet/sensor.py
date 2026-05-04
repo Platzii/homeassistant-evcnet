@@ -201,21 +201,38 @@ def parse_locale_number(value: Any, default: float = 0.0) -> float:
 
 
 def convert_time_to_decimal_hours(time_str: str) -> float:
-    """Convert HH:MM time format to decimal hours (e.g., 2:30 -> 2.5)."""
+    """Convert time string to decimal hours.
+
+    Supports the following formats:
+      - ``HH:MM``                (e.g. ``2:30`` -> 2.5)
+      - ``Xd HH:MM`` / ``XdHH:MM`` (e.g. ``1d03:09`` -> 27.15) for sessions
+        longer than 24 hours, where ``X`` is the number of days.
+    """
     if not time_str or not isinstance(time_str, str):
         return 0.0
 
+    raw = time_str.strip()
+
     try:
+        days = 0
+        remainder = raw
+
+        # Handle optional day prefix like "1d03:09" or "1d 03:09"
+        if "d" in remainder.lower():
+            day_part, _, rest = remainder.lower().partition("d")
+            days = int(day_part.strip())
+            remainder = rest.strip()
+
         # Split by colon and convert to integers
-        parts = time_str.split(':')
+        parts = remainder.split(":")
         if len(parts) == 2:
             hours = int(parts[0])
             minutes = int(parts[1])
-            # Convert to decimal hours: hours + (minutes / 60)
-            return hours + (minutes / 60.0)
-        else:
-            _LOGGER.warning("Invalid time format: %s", time_str)
-            return 0.0
+            # Convert to decimal hours: days*24 + hours + (minutes / 60)
+            return (days * 24) + hours + (minutes / 60.0)
+
+        _LOGGER.warning("Invalid time format: %s", time_str)
+        return 0.0
     except (ValueError, TypeError) as err:
         _LOGGER.warning("Error converting time '%s' to decimal hours: %s", time_str, err)
         return 0.0
