@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Session time parsing**: Charging sessions longer than 24 hours are now parsed correctly. Previously the integration logged `Error converting time '1d03:09' to decimal hours: invalid literal for int() with base 10: '1d03'` because the `Xd HH:MM` format returned by EVC-net was not handled (#29).
+
 ## [1.0.1] - 2026-02-19
 
 ### Fixed
