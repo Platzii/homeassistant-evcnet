@@ -1,70 +1,36 @@
+---
 start_charging:
-  name: Start charging
-  description: Start a charging session with an optional RFID card ID
+  name: "Start charging"
+  description: "Start a charging session with an optional RFID card ID"
   target:
     entity:
-      domain: switch
-      integration: evcnet
+      domain: "switch"
+      integration: "evcnet"
   fields:
     card_id:
-      name: RFID Card ID
-      description: Optional RFID card ID to use for this charging session. If not provided, uses the default card configured in the integration.
+      name: "RFID Card ID"
+      description: "Optional RFID card ID to use for this charging session."
       required: false
       selector:
         text:
-
-stop_charging:
-  name: Stop charging
-  description: Stop the current charging session
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
-
-refresh_status:
-  name: Refresh status
-  description: Manually trigger an immediate status update from the portal
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
-
-soft_reset:
-  name: Soft reset
-  description: Perform a soft reset on the charging station
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
-
-hard_reset:
-  name: Hard reset
-  description: Perform a hard reset on the charging station
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
-
-unlock_connector:
-  name: Unlock connector
-  description: Unlock the connector on the charging station
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
-
-block:
-  name: Block
-  description: Block the charging station from use
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
-
-unblock:
-  name: Unblock
-  description: Unblock the charging station for use
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
+    channel_id:
+      name: "Channel"
+      description: "Optional channel (socket) to use for this charging session."
+      required: false
+      default: "1"
+      example: "2"
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
+            - "6"
+            - "7"
+            - "8"
+            - "9"
+            - "10"
+          custom_value: true
+          mode: dropdown

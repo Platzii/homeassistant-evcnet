@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2-beta.7] - 2026-05-14
+
+### Fixed
+- Fixed `Session Cost (excl. VAT)` spikes for some users by deriving excl. VAT from GraphQL `totalAmount` and `vat` when available, then falling back to `energy * tariff` only when needed.
+
+## [1.2.2-beta.6] - 2026-05-13
+
+### Fixed
+- Fixed tariff_source incorrectly showing "graphql_hcc" when HCC is disabled but previous cached value persists. Now explicitly resets hcc_tariff to None when GraphQL HCC is unavailable, forcing correct fallback to web sources.
+
+## [1.2.2-beta.5] - 2026-05-13
+
+### Changed
+- Verification release to confirm automated release notes are always included in prereleases.
+
+## [1.2.2-beta.4] - 2026-05-13
+
+### Added
+- New diagnostic sensor: `Reimbursement Tariff Source` to show which tariff source is active (`graphql_hcc`, `web_reimbursement_tariff`, `web_tariff`, or `unavailable`).
+
+## [1.2.2-beta.3] - 2026-05-13
+
+### Fixed
+- Improved tariff source selection to support three paths in priority order: GraphQL HCC tariff, web reimbursement tariff, then web rounded tariff.
+- Added tariff source diagnostics attributes so it is visible which source is currently used and what raw/parsed web tariff values are available.
+- Hardened session cost calculations to parse locale-formatted numeric strings from both GraphQL and web status payloads.
+
+## [1.2.2-beta.2] - 2026-05-13
+
+### Fixed
+- Added tariff fallback from dashboard data (`TARIFF`, for example `0,36 EUR`) when GraphQL HCC tariff is unavailable or disabled.
+- Improved locale number parsing to handle currency-suffixed tariff strings.
+- Hardened GraphQL response parsing for `data: null` responses to avoid `NoneType` errors in VAT/transaction fallback logic.
+
+## [1.2.1] - 2026-05-12
+
+### Fixed
+- Guard coordinator fallback paths when `self.data` is not initialized yet to prevent `NoneType` membership errors during setup.
+- Harden customer lookup parsing when API returns empty nested lists to prevent `list index out of range` warnings.
+- Make spot polling and device info retrieval safe when coordinator data is temporarily unavailable.
+
 ## [1.0.1] - 2026-02-19
 
 ### Fixed
