@@ -15,10 +15,15 @@ def parse_locale_number(value: Any, default: float | None = 0.0) -> float | None
     if isinstance(value, (int, float)):
         return float(value)
 
+<<<<<<< HEAD
     # Delete currency markers and keep only numeric-relevant characters.
     clean_value = str(value).strip().replace("€", "").replace("%", "")
     clean_value = re.sub(r"\bEUR\b", "", clean_value, flags=re.IGNORECASE)
     clean_value = re.sub(r"[^0-9,.-]", "", clean_value)
+=======
+    # Delete currency signs or extra spaces
+    clean_value = str(value).strip().replace("€", "").replace("%", "").replace("EUR", "").strip()
+>>>>>>> main
 
     try:
         # Is it a standard float-string? (1.234)

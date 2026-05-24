@@ -13,5 +13,9 @@
     "requirements": [
         "aiohttp>=3.9.0"
     ],
+<<<<<<< HEAD
     "version": "v1.2.2-beta.7"
+=======
+    "version": "v1.3.0"
+>>>>>>> main
 }

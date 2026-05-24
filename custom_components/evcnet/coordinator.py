@@ -208,6 +208,7 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, EvcSpotData]]):
                 spot_id,
                 total_energy_usage,
             )
+<<<<<<< HEAD
             hcc_tariff, vat_rate, active_transaction, vat_source, active_transaction_source = (
                 await self._async_get_graphql_data(spot_id)
             )
@@ -247,6 +248,30 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, EvcSpotData]]):
                 web_reimbursement_tariff,
                 web_tariff,
             )
+=======
+            (
+                hcc_tariff,
+                vat_rate,
+                active_transaction,
+                vat_source,
+                active_transaction_source,
+            ) = await self._async_get_graphql_data(spot_id)
+
+            web_tariff = parse_locale_number(
+                spot.get("TARIFF"), default=None
+            ) if spot.get("TARIFF") else None
+            web_reimbursement_tariff = parse_locale_number(
+                spot.get("REIMBURSEMENT_TARIFF"), default=None
+            ) if spot.get("REIMBURSEMENT_TARIFF") else None
+
+            # GraphQL is preferred; web is fallback
+            if hcc_tariff is not None:
+                tariff_source = "graphql"
+            elif web_reimbursement_tariff is not None:
+                tariff_source = "web"
+            else:
+                tariff_source = None
+>>>>>>> main
 
             if selected_channel_id:
                 logging_data = await self._async_get_logging(
@@ -396,7 +421,17 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, EvcSpotData]]):
     async def _async_get_graphql_data(
         self,
         spot_id: str,
+<<<<<<< HEAD
     ) -> tuple[float | None, float | None, dict[str, Any] | None, str | None, str | None]:
+=======
+    ) -> tuple[
+        float | None,
+        float | None,
+        dict[str, Any] | None,
+        str | None,
+        str | None,
+    ]:
+>>>>>>> main
         """Fetch HCC tariff and active transaction from the GraphQL API.
 
         Returns (hcc_tariff, vat_rate, active_transaction, vat_source, active_transaction_source).
@@ -409,12 +444,21 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, EvcSpotData]]):
         prev_vat = prev.vat_rate if prev else None
         prev_tx = prev.active_transaction if prev else None
         prev_vat_source = prev.vat_source if prev else None
+<<<<<<< HEAD
+=======
+        prev_active_tx_source = prev.active_transaction_source if prev else None
+>>>>>>> main
 
         hcc_tariff: float | None = prev_tariff
         vat_rate: float | None = prev_vat
         vat_source: str | None = prev_vat_source
         active_transaction: dict[str, Any] | None = prev_tx
+<<<<<<< HEAD
         active_transaction_source: str | None = None
+=======
+        vat_source: str | None = prev_vat_source
+        active_transaction_source: str | None = prev_active_tx_source
+>>>>>>> main
 
         try:
             tariff_response = await self.client.get_hcc_tariff(spot_id)
@@ -463,7 +507,11 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, EvcSpotData]]):
             )
             active_transaction = tx_data
             if tx_data:
+<<<<<<< HEAD
                 active_transaction_source = "active_transaction"
+=======
+                active_transaction_source = "graphql"
+>>>>>>> main
                 raw_vat = tx_data.get("vat")
                 vat_value: float | None = None
                 if isinstance(raw_vat, (int, float)):
@@ -476,7 +524,11 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, EvcSpotData]]):
 
                 if vat_value is not None and vat_value >= 0:
                     vat_rate = vat_value
+<<<<<<< HEAD
                     vat_source = "active_transaction"
+=======
+                    vat_source = "graphql_active_transaction"
+>>>>>>> main
 
                 _LOGGER.debug(
                     "GraphQL active transaction for spot %s: channel=%s energy=%s total=%s vat=%s tariff_id=%s",
@@ -527,7 +579,11 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, EvcSpotData]]):
 
                 if fallback_vats:
                     vat_rate = max(fallback_vats)
+<<<<<<< HEAD
                     vat_source = "recent_transactions"
+=======
+                    vat_source = "graphql_recent_transactions"
+>>>>>>> main
                     _LOGGER.debug(
                         "GraphQL VAT fallback for spot %s from recent transactions: %s",
                         spot_id,

@@ -41,7 +41,11 @@ class EvcNetSensorEntityDescription(SensorEntityDescription):
 
 
 def _session_energy_kwh(data: EvcSpotData) -> float | None:
+<<<<<<< HEAD
     """Get session energy in kWh from active transaction or status fallback."""
+=======
+    """Get session energy in kWh — GraphQL active transaction first, web status fallback."""
+>>>>>>> main
     if data.active_transaction is not None:
         active_energy = parse_locale_number(
             data.active_transaction.get("energyDelivered"),
@@ -57,15 +61,40 @@ def _session_energy_kwh(data: EvcSpotData) -> float | None:
 
 
 def _session_energy_source(data: EvcSpotData) -> str:
+<<<<<<< HEAD
     """Determine source of session energy."""
+=======
+    """Determine source of session energy: 'graphql' or 'web'."""
+>>>>>>> main
     if data.active_transaction is not None:
         active_energy = parse_locale_number(
             data.active_transaction.get("energyDelivered"),
             default=None,
         )
         if active_energy is not None:
+<<<<<<< HEAD
             return "active_transaction"
     return "status"
+=======
+            return "graphql"
+    return "web"
+
+
+def _reimbursement_tariff(data: EvcSpotData) -> float | None:
+    """Get reimbursement tariff — GraphQL first, web fallback."""
+    if data.hcc_tariff is not None:
+        return data.hcc_tariff
+    return data.web_reimbursement_tariff
+
+
+def _reimbursement_tariff_source(data: EvcSpotData) -> str:
+    """Determine source of reimbursement tariff: 'graphql', 'web', or 'unavailable'."""
+    if data.hcc_tariff is not None:
+        return "graphql"
+    if data.web_reimbursement_tariff is not None:
+        return "web"
+    return "unavailable"
+>>>>>>> main
 
 
 def _session_total_amount(data: EvcSpotData) -> float | None:
@@ -77,6 +106,7 @@ def _session_total_amount(data: EvcSpotData) -> float | None:
 
 
 def _session_cost_source(data: EvcSpotData) -> str:
+<<<<<<< HEAD
     """Determine source of session cost.
     
     Returns 'active_transaction' if using totalAmount from GraphQL,
@@ -84,14 +114,24 @@ def _session_cost_source(data: EvcSpotData) -> str:
     """
     if _session_total_amount(data) is not None:
         return "active_transaction"
+=======
+    """Determine source of session cost: 'graphql' (totalAmount) or 'calculated'."""
+    if _session_total_amount(data) is not None:
+        return "graphql"
+>>>>>>> main
     return "calculated"
 
 
 def _session_cost_excl_vat(data: EvcSpotData) -> float | None:
     """Get session cost excluding VAT.
 
+<<<<<<< HEAD
     Prefer GraphQL totalAmount/VAT when available to avoid discrepancies caused
     by differing energy units between APIs.
+=======
+    Prefer GraphQL totalAmount/VAT when available. Falls back to
+    energy * tariff (using GraphQL tariff first, web tariff as fallback).
+>>>>>>> main
     """
     total_amount = _session_total_amount(data)
     if (
@@ -102,9 +142,16 @@ def _session_cost_excl_vat(data: EvcSpotData) -> float | None:
     ):
         return total_amount / (1 + data.vat_rate)
 
+<<<<<<< HEAD
     session_energy = _session_energy_kwh(data)
     if session_energy is not None and data.hcc_tariff is not None:
         return session_energy * data.hcc_tariff
+=======
+    tariff = _reimbursement_tariff(data)
+    session_energy = _session_energy_kwh(data)
+    if session_energy is not None and tariff is not None:
+        return session_energy * tariff
+>>>>>>> main
 
     return None
 
@@ -162,9 +209,10 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         state_class=SensorStateClass.TOTAL,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: parse_locale_number(
-            data.status.get("TRANS_ENERGY_DELIVERED_KWH", 0.0)
-        ),
+        value_fn=lambda data: _session_energy_kwh(data),
+        attributes_fn=lambda data: {
+            "energy_source": _session_energy_source(data),
+        },
     ),
     EvcNetSensorEntityDescription(
         key="session_time",
@@ -185,16 +233,26 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
             "entries": data.logging,
         },
     ),
+<<<<<<< HEAD
     # --- HCC tariff & session cost sensors (GraphQL / mobile app backend) ---
+=======
+    # --- HCC tariff & session cost sensors (GraphQL first, web fallback) ---
+>>>>>>> main
     EvcNetSensorEntityDescription(
         key="reimbursement_tariff_excl_vat",
         translation_key="reimbursement_tariff_excl_vat",
         native_unit_of_measurement=f"{CURRENCY_EURO}/kWh",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
+<<<<<<< HEAD
         value_fn=lambda data: data.hcc_tariff,
         attributes_fn=lambda data: {
             "tariff_source": data.tariff_source,
+=======
+        value_fn=lambda data: _reimbursement_tariff(data),
+        attributes_fn=lambda data: {
+            "tariff_source": _reimbursement_tariff_source(data),
+>>>>>>> main
             "web_tariff_raw": data.info.get("TARIFF"),
             "web_reimbursement_tariff_raw": data.info.get("REIMBURSEMENT_TARIFF"),
             "web_tariff_parsed": data.web_tariff,
@@ -208,6 +266,7 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: (
+<<<<<<< HEAD
             round(data.hcc_tariff * (1 + data.vat_rate), 4)
             if data.hcc_tariff is not None and data.vat_rate is not None
             else None
@@ -246,6 +305,46 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
             "cost_source": _session_cost_source(data),
             "energy_source": _session_energy_source(data),
             "tariff_source": data.tariff_source,
+=======
+            round(_reimbursement_tariff(data) * (1 + data.vat_rate), 4)
+            if _reimbursement_tariff(data) is not None and data.vat_rate is not None
+            else None
+        ),
+        attributes_fn=lambda data: {
+            "tariff_source": _reimbursement_tariff_source(data),
+            "vat_source": data.vat_source,
+        },
+    ),
+    EvcNetSensorEntityDescription(
+        key="vat_rate",
+        translation_key="vat_rate",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: (
+            round(data.vat_rate * 100, 1) if data.vat_rate is not None else None
+        ),
+        attributes_fn=lambda data: {
+            "vat_source": data.vat_source or "unavailable",
+            "active_transaction_source": data.active_transaction_source,
+        },
+    ),
+    EvcNetSensorEntityDescription(
+        key="session_cost_excl_vat",
+        translation_key="session_cost_excl_vat",
+        native_unit_of_measurement=CURRENCY_EURO,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: (
+            round(cost, 2)
+            if (cost := _session_cost_excl_vat(data)) is not None
+            else None
+        ),
+        attributes_fn=lambda data: {
+            "cost_source": _session_cost_source(data),
+            "energy_source": _session_energy_source(data),
+            "tariff_source": _reimbursement_tariff_source(data),
+>>>>>>> main
             "vat_source": data.vat_source,
             "active_transaction_source": data.active_transaction_source,
         },
@@ -257,6 +356,7 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: (
+<<<<<<< HEAD
             round(_session_total_amount(data), 2)
             if _session_total_amount(data) is not None
             else (
@@ -267,13 +367,26 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
                 if _session_energy_kwh(data) is not None
                 and data.hcc_tariff is not None
                 and data.vat_rate is not None
+=======
+            round(ta, 2)
+            if (ta := _session_total_amount(data)) is not None
+            else (
+                round(e * t * (1 + v), 2)
+                if (e := _session_energy_kwh(data)) is not None
+                and (t := _reimbursement_tariff(data)) is not None
+                and (v := data.vat_rate) is not None
+>>>>>>> main
                 else None
             )
         ),
         attributes_fn=lambda data: {
             "cost_source": _session_cost_source(data),
             "energy_source": _session_energy_source(data),
+<<<<<<< HEAD
             "tariff_source": data.tariff_source,
+=======
+            "tariff_source": _reimbursement_tariff_source(data),
+>>>>>>> main
             "vat_source": data.vat_source,
             "active_transaction_source": data.active_transaction_source,
         },
