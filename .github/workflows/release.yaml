@@ -15,6 +15,24 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v5
+    - name: Build release notes from changelog
+      id: notes
+      shell: bash
+      run: |
+        set -euo pipefail
+        TAG="${GITHUB_REF_NAME#v}"
+        OUT="${{ github.workspace }}/RELEASE_NOTES.md"
+
+        awk -v tag="$TAG" '
+          BEGIN { in_section=0 }
+          $0 ~ "^## \\[" tag "\\]" { in_section=1; next }
+          $0 ~ "^## \\[" && in_section { exit }
+          in_section { print }
+        ' CHANGELOG.md > "$OUT"
+
+        if [ ! -s "$OUT" ]; then
+          echo "No matching changelog section found for $TAG; using fallback note." > "$OUT"
+        fi
     - name: Create ZIP
       shell: bash
       run: |
@@ -24,8 +42,6 @@ jobs:
       uses: softprops/action-gh-release@v2.4.1
       with:
         files: ${{ github.workspace }}/custom_components/evcnet/homeassistant-evcnet.zip
+        body_path: ${{ github.workspace }}/RELEASE_NOTES.md
         generate_release_notes: true
-        body: |
-          ## Home Assistant EVC-net release
-
-          See the auto-generated release notes below for the full list of changes.
+        append_body: true
