@@ -1,38 +1,63 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
 ## [1.3.0] - 2026-05-25
 
 ### Added
-- Added source diagnostics attributes on GraphQL-related sensors so each sensor reports its own source.
-- Added coordinator source tracking fields for VAT and active transaction availability.
+- Added source diagnostics as attributes on GraphQL-related sensors so each sensor shows where its value came from.
+- Added VAT and active-transaction source tracking in coordinator data.
 
 ### Changed
-- Tariff selection now prefers GraphQL and falls back to web tariff values when GraphQL data is unavailable.
-- Session energy now prefers active transaction data and falls back to web status values.
+- Tariff selection now prefers GraphQL values and falls back to web tariff values when GraphQL is unavailable.
+- Session energy now prefers active transaction data and falls back to status data.
 - Session cost calculations now use GraphQL-first tariff selection with web fallback.
 
 ### Fixed
-- Removed dedicated source-only sensors and exposed per-sensor source attributes for clearer diagnostics.
-- Improved locale number parsing for currency-suffixed values like `EUR`.
-- Synced release preparation updates between `main` and `add-tariffs`.
+- Fixed source visibility by removing dedicated source-only sensors and exposing source per sensor via attributes.
+- Fixed locale number parsing for currency-suffixed values like `EUR`.
+- Fixed branch sync and validation trigger workflow for current release preparation.
 
-## [1.3.0] - 2026-05-25
+## [1.2.2-beta.7] - 2026-05-14
+
+### Fixed
+- Fixed `Session Cost (excl. VAT)` spikes for some users by deriving excl. VAT from GraphQL `totalAmount` and `vat` when available, then falling back to `energy * tariff` only when needed.
+
+## [1.2.2-beta.6] - 2026-05-13
+
+### Fixed
+- Fixed tariff_source incorrectly showing "graphql_hcc" when HCC is disabled but previous cached value persists. Now explicitly resets hcc_tariff to None when GraphQL HCC is unavailable, forcing correct fallback to web sources.
+
+## [1.2.2-beta.5] - 2026-05-13
+
+### Changed
+- Verification release to confirm automated release notes are always included in prereleases.
+
+## [1.2.2-beta.4] - 2026-05-13
 
 ### Added
-- Added source diagnostics attributes on GraphQL-related sensors so each sensor reports its own source.
-- Added coordinator source tracking fields for VAT and active transaction availability.
+- New diagnostic sensor: `Reimbursement Tariff Source` to show which tariff source is active (`graphql_hcc`, `web_reimbursement_tariff`, `web_tariff`, or `unavailable`).
 
-### Changed
-- Tariff selection now prefers GraphQL and falls back to web tariff values when GraphQL data is unavailable.
-- Session energy now prefers active transaction data and falls back to web status values.
-- Session cost calculations now use GraphQL-first tariff selection with web fallback.
+## [1.2.2-beta.3] - 2026-05-13
 
 ### Fixed
-- Removed dedicated source-only sensors and exposed per-sensor source attributes for clearer diagnostics.
-- Improved locale number parsing for currency-suffixed values like EUR.
-- Synced release preparation updates between main and dd-tariffs.
+- Improved tariff source selection to support three paths in priority order: GraphQL HCC tariff, web reimbursement tariff, then web rounded tariff.
+- Added tariff source diagnostics attributes so it is visible which source is currently used and what raw/parsed web tariff values are available.
+- Hardened session cost calculations to parse locale-formatted numeric strings from both GraphQL and web status payloads.
+
+## [1.2.2-beta.2] - 2026-05-13
+
+### Fixed
+- Added tariff fallback from dashboard data (`TARIFF`, for example `0,36 EUR`) when GraphQL HCC tariff is unavailable or disabled.
+- Improved locale number parsing to handle currency-suffixed tariff strings.
+- Hardened GraphQL response parsing for `data: null` responses to avoid `NoneType` errors in VAT/transaction fallback logic.
+
+## [1.2.1] - 2026-05-12
+
+### Fixed
+- Guard coordinator fallback paths when `self.data` is not initialized yet to prevent `NoneType` membership errors during setup.
+- Harden customer lookup parsing when API returns empty nested lists to prevent `list index out of range` warnings.
+- Make spot polling and device info retrieval safe when coordinator data is temporarily unavailable.
 
 ## [1.0.1] - 2026-02-19
 
@@ -47,7 +72,7 @@ All notable changes to this project will be documented in this file.
 
 This release introduces multi-channel support and is versioned 1.0.0 to reflect the impact for users with multi-connector charging stations.
 
-ðŸ™ A big shout-out to @nikagl for creating the multi-channel support, log retrieval, refresh status and stop charging features.
+🙏 A big shout-out to @nikagl for creating the multi-channel support, log retrieval, refresh status and stop charging features.
 
 ### Added
 - **Log retrieval**: New sensors show charging log summary, last log time, and last log notification. The log summary sensor exposes a markdown table of recent sessions (usable in a Markdown card).
@@ -159,4 +184,3 @@ This release introduces multi-channel support and is versioned 1.0.0 to reflect 
 - Switch platform for starting/stopping charging sessions
 - Config flow for integration setup
 - Auto-detection of RFID card ID
-
