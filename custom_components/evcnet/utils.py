@@ -6,7 +6,7 @@ from typing import Any
 _LOGGER = logging.getLogger(__name__)
 
 
-def parse_locale_number(value: Any, default: float = 0.0) -> float:
+def parse_locale_number(value: Any, default: float | None = 0.0) -> float | None:
     """Parseert getallen en gaat slim om met Europese/Engelse notaties."""
     if value is None or value == "":
         return default
@@ -15,7 +15,7 @@ def parse_locale_number(value: Any, default: float = 0.0) -> float:
         return float(value)
 
     # Delete currency signs or extra spaces
-    clean_value = str(value).strip().replace("€", "").replace("%", "")
+    clean_value = str(value).strip().replace("€", "").replace("%", "").replace("EUR", "").strip()
 
     try:
         # Is it a standard float-string? (1.234)
