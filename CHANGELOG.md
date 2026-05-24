@@ -1,6 +1,38 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [1.3.0] - 2026-05-25
+
+### Added
+- Added source diagnostics attributes on GraphQL-related sensors so each sensor reports its own source.
+- Added coordinator source tracking fields for VAT and active transaction availability.
+
+### Changed
+- Tariff selection now prefers GraphQL and falls back to web tariff values when GraphQL data is unavailable.
+- Session energy now prefers active transaction data and falls back to web status values.
+- Session cost calculations now use GraphQL-first tariff selection with web fallback.
+
+### Fixed
+- Removed dedicated source-only sensors and exposed per-sensor source attributes for clearer diagnostics.
+- Improved locale number parsing for currency-suffixed values like `EUR`.
+- Synced release preparation updates between `main` and `add-tariffs`.
+
+## [1.3.0] - 2026-05-25
+
+### Added
+- Added source diagnostics attributes on GraphQL-related sensors so each sensor reports its own source.
+- Added coordinator source tracking fields for VAT and active transaction availability.
+
+### Changed
+- Tariff selection now prefers GraphQL and falls back to web tariff values when GraphQL data is unavailable.
+- Session energy now prefers active transaction data and falls back to web status values.
+- Session cost calculations now use GraphQL-first tariff selection with web fallback.
+
+### Fixed
+- Removed dedicated source-only sensors and exposed per-sensor source attributes for clearer diagnostics.
+- Improved locale number parsing for currency-suffixed values like EUR.
+- Synced release preparation updates between main and dd-tariffs.
 
 ## [1.0.1] - 2026-02-19
 
@@ -15,7 +47,7 @@ All notable changes to this project will be documented in this file.
 
 This release introduces multi-channel support and is versioned 1.0.0 to reflect the impact for users with multi-connector charging stations.
 
-🙏 A big shout-out to @nikagl for creating the multi-channel support, log retrieval, refresh status and stop charging features.
+ðŸ™ A big shout-out to @nikagl for creating the multi-channel support, log retrieval, refresh status and stop charging features.
 
 ### Added
 - **Log retrieval**: New sensors show charging log summary, last log time, and last log notification. The log summary sensor exposes a markdown table of recent sessions (usable in a Markdown card).
@@ -127,3 +159,4 @@ This release introduces multi-channel support and is versioned 1.0.0 to reflect 
 - Switch platform for starting/stopping charging sessions
 - Config flow for integration setup
 - Auto-detection of RFID card ID
+
