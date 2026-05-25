@@ -43,5 +43,6 @@ jobs:
       with:
         files: ${{ github.workspace }}/custom_components/evcnet/homeassistant-evcnet.zip
         body_path: ${{ github.workspace }}/RELEASE_NOTES.md
+        prerelease: ${{ contains(github.ref_name, '-') }}
         generate_release_notes: true
         append_body: true

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1-beta.1] - 2026-05-25
+
+### Fixed
+- Resolved committed merge-conflict markers in the integration manifest and tariff-related source files.
+- Restored valid HACS and hassfest validation for prerelease testing before PR #33 is merged.
+
 ## [1.3.0] - 2026-05-25
 
 ### Added
