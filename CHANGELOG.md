@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1-beta.2] - 2026-05-26
+
+### Fixed
+- Fixed Session Energy scaling when GraphQL active transaction data is available by converting `energyDelivered` from Wh to kWh.
+- Kept status fallback behavior unchanged when GraphQL active transaction is unavailable.
+
 ## [1.3.1-beta.1] - 2026-05-25
 
 ### Fixed

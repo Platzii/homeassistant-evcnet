@@ -48,7 +48,8 @@ def _session_energy_kwh(data: EvcSpotData) -> float | None:
             default=None,
         )
         if active_energy is not None:
-            return active_energy
+            # GraphQL lmsActiveTransaction.energyDelivered is reported in Wh.
+            return active_energy / 1000
 
     return parse_locale_number(
         data.status.get("TRANS_ENERGY_DELIVERED_KWH"),
