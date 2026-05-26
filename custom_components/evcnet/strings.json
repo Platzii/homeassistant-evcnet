@@ -1,0 +1,114 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to EVC-net",
+        "description": "Enter your EVC-net (Last Mile Solutions) account credentials.",
+        "data": {
+          "base_url": "Portal URL (e.g., {evcnet_url})",
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure EVC-net",
+        "description": "Update your credentials for {username}. Leave the password blank to keep the current one.",
+        "data": {
+          "base_url": "Portal URL (e.g., {evcnet_url})",
+          "username": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password",
+      "cannot_connect": "Cannot connect to EVC-net",
+      "invalid_url": "Invalid URL format. Use http:// or https://",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This account is already configured",
+      "reconfigure_successful": "Reconfiguration successful"
+    }
+  },
+  "entity": {
+    "button": {
+      "block_charging": {
+        "name": "Block Charging"
+      },
+      "hard_reset": {
+        "name": "Hard Reset"
+      },
+      "poll_now": {
+        "name": "Poll Now"
+      },
+      "retrieve_status": {
+        "name": "Retrieve Status"
+      },
+      "soft_reset": {
+        "name": "Soft Reset"
+      },
+      "unblock_charging": {
+        "name": "Unblock Charging"
+      },
+      "unlock_connector": {
+        "name": "Unlock Connector"
+      }
+    },
+    "select": {
+      "active_channel": {
+        "name": "Active Channel"
+      },
+      "active_card": {
+        "name": "Active Card"
+      }
+    },
+    "sensor": {
+      "connector": {
+        "name": "Connector"
+      },
+      "current_power": {
+        "name": "Current Power"
+      },
+      "last_logging_update": {
+        "name": "Last Logging Update"
+      },
+      "session_energy": {
+        "name": "Session Energy"
+      },
+      "session_time": {
+        "name": "Session Time"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "status_code": {
+        "name": "Status Code"
+      },
+      "total_energy_usage": {
+        "name": "Total Energy Usage"
+      }
+        ,
+        "reimbursement_tariff_excl_vat": {
+          "name": "Reimbursement Tariff (excl. VAT)"
+        },
+        "reimbursement_tariff_incl_vat": {
+          "name": "Reimbursement Tariff (incl. VAT)"
+        },
+        "vat_rate": {
+          "name": "VAT Rate"
+        },
+        "session_cost_excl_vat": {
+          "name": "Session Cost (excl. VAT)"
+        },
+        "session_cost_incl_vat": {
+          "name": "Session Cost (incl. VAT)"
+        }
+    },
+    "switch": {
+      "charging": {
+        "name": "Charging"
+      }
+    }
+  }
+}

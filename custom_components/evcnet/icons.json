@@ -1,0 +1,63 @@
+{
+  "entity": {
+    "button": {
+      "block_charging": {
+        "default": "mdi:cancel"
+      },
+      "hard_reset": {
+        "default": "mdi:power-cycle"
+      },
+      "poll_now": {
+        "default": "mdi:refresh"
+      },
+      "soft_reset": {
+        "default": "mdi:restart"
+      },
+      "unblock_charging": {
+        "default": "mdi:check-circle"
+      },
+      "unlock_connector": {
+        "default": "mdi:lock-open-variant"
+      }
+    },
+    "select": {
+      "active_channel": {
+        "default": "mdi:numeric"
+      },
+      "active_card": {
+        "default": "mdi:card-account-details"
+      }
+    },
+    "sensor": {
+      "connector": {
+        "default": "mdi:connection"
+      },
+      "current_power": {
+        "default": "mdi:lightning-bolt"
+      },
+      "last_logging_update": {
+        "default": "mdi:history"
+      },
+      "session_energy": {
+        "default": "mdi:battery-charging"
+      },
+      "session_time": {
+        "default": "mdi:timer"
+      },
+      "status": {
+        "default": "mdi:information-outline"
+      },
+      "status_code": {
+        "default": "mdi:information"
+      },
+      "total_energy_usage": {
+        "default": "mdi:flash"
+      }
+    },
+    "switch": {
+      "charging": {
+        "default": "mdi:ev-station"
+      }
+    }
+  }
+}
