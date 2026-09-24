@@ -1,223 +1,162 @@
-"""Config flow for EVC-net integration."""
+"""Config, email OTP, reauthentication and options flows for EVC-net."""
+import asyncio
 import logging
 from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import EvcNetApiClient
-from .const import CONF_BASE_URL, DEFAULT_BASE_URL, DOMAIN, CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS
+from .api import ApiError, AuthenticationError, InvalidOtp, TwoFactorRequired
+from .const import (
+    CONF_BASE_URL,
+    CONF_MAX_CHANNELS,
+    DEFAULT_BASE_URL,
+    DEFAULT_MAX_CHANNELS,
+    DOMAIN,
+)
+from .session import create_client
 
 _LOGGER = logging.getLogger(__name__)
-
 CONF_CARD_ID = "card_id"
 CONF_CUSTOMER_ID = "customer_id"
 
 
-def validate_url(url: str) -> bool:
-    """Validate URL format."""
+def validate_url(url):
     try:
-        result = urlparse(url)
-        return all([result.scheme, result.netloc]) and result.scheme in ['http', 'https']
-    except Exception:
+        parsed = urlparse(url)
+        return (parsed.scheme == "https" and bool(parsed.hostname)
+                and not parsed.username and not parsed.password
+                and parsed.path in ("", "/") and not parsed.query and not parsed.fragment)
+    except ValueError:
         return False
-
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_BASE_URL, default=DEFAULT_BASE_URL): str,
-        vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
-    }
-)
-
-STEP_CARD_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Optional(CONF_CARD_ID, description={"suggested_value": ""}): str,
-        vol.Optional(CONF_CUSTOMER_ID, description={"suggested_value": ""}): str,
-    }
-)
 
 
 class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for EVC-net."""
-
+    """Keep the challenge cookies and CSRF token in memory until OTP succeeds."""
     VERSION = 1
 
-    def __init__(self) -> None:
-        """Initialize the config flow."""
-        self._user_input: dict[str, Any] = {}
+    def __init__(self):
+        self._user_input = {}
+        self._client = None
+        self._save = None
+        self._entry = None
+        self._mode = "user"
+
+    @callback
+    def async_remove(self):
+        if self._client:
+            self._client.session.detach()
+        super().async_remove()
 
     @staticmethod
-    @config_entries.callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
-        """Get the options flow for this handler."""
+    @callback
+    def async_get_options_flow(config_entry):
         return EvcNetOptionsFlowHandler()
 
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle reconfigure flow."""
-        errors: dict[str, str] = {}
+    async def async_step_user(self, user_input=None):
+        return await self._credentials("user", user_input)
 
-        # Get the config entry from context
-        config_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+    async def async_step_reconfigure(self, user_input=None):
+        self._entry = self._get_reconfigure_entry()
+        return await self._credentials("reconfigure", user_input)
 
-        if not config_entry:
-            _LOGGER.error("Config entry not found for reconfigure flow")
-            return self.async_abort(reason="unknown")
+    async def async_step_reauth(self, entry_data):
+        self._entry = self._get_reauth_entry()
+        return await self.async_step_reauth_confirm()
 
+    async def async_step_reauth_confirm(self, user_input=None):
+        return await self._credentials("reauth_confirm", user_input)
+
+    async def _credentials(self, step, user_input):
+        self._mode = step
+        errors = {}
+        current = dict(self._entry.data) if self._entry else {}
         if user_input is not None:
-            # Validate the user input
-            if not validate_url(user_input[CONF_BASE_URL]):
+            data = {**current, **user_input}
+            if self._entry and not user_input.get(CONF_PASSWORD):
+                data[CONF_PASSWORD] = current[CONF_PASSWORD]
+            if not validate_url(data[CONF_BASE_URL]):
                 errors["base"] = "invalid_url"
             else:
+                data[CONF_BASE_URL] = data[CONF_BASE_URL].rstrip("/")
+                self._user_input = data
+                if not self._entry:
+                    await self.async_set_unique_id(f"{data[CONF_USERNAME]}_{data[CONF_BASE_URL]}")
+                    self._abort_if_unique_id_configured()
+                if self._client:
+                    self._client.session.detach()
+                self._client, _, self._save = create_client(self.hass, data)
                 try:
-                    session = async_get_clientsession(self.hass)
-
-                    # Use existing password if not provided
-                    password = user_input[CONF_PASSWORD] or config_entry.data[CONF_PASSWORD]
-
-                    client = EvcNetApiClient(
-                        user_input[CONF_BASE_URL],
-                        user_input[CONF_USERNAME],
-                        password,
-                        session,
-                    )
-
-                    # Test authentication
-                    if await client.authenticate():
-                        # Update the config entry
-                        self.hass.config_entries.async_update_entry(
-                            config_entry,
-                            data={
-                                **config_entry.data,
-                                CONF_BASE_URL: user_input[CONF_BASE_URL],
-                                CONF_USERNAME: user_input[CONF_USERNAME],
-                                CONF_PASSWORD: password,
-                            }
-                        )
-                        return self.async_abort(reason="reconfigure_successful")
-                    else:
-                        errors["base"] = "invalid_auth"
-                except aiohttp.ClientError:
+                    await self._client.authenticate()
+                except TwoFactorRequired:
+                    return await self.async_step_otp()
+                except AuthenticationError:
+                    errors["base"] = "invalid_auth"
+                except (aiohttp.ClientError, asyncio.TimeoutError):
                     errors["base"] = "cannot_connect"
-                except Exception:  # pylint: disable=broad-except
-                    _LOGGER.exception("Unexpected exception")
-                    errors["base"] = "unknown"
+                except ApiError:
+                    errors["base"] = "invalid_response"
+                else:
+                    return await self._finish_auth()
+        # Reauth keeps account identity fixed; a blank password reuses the saved one.
+        schema = {}
+        if step != "reauth_confirm":
+            schema[vol.Required(CONF_BASE_URL, default=current.get(CONF_BASE_URL, DEFAULT_BASE_URL))] = str
+            schema[vol.Required(CONF_USERNAME, default=current.get(CONF_USERNAME, ""))] = str
+        if self._entry:
+            schema[vol.Optional(CONF_PASSWORD, default="")] = str
+        else:
+            schema[vol.Required(CONF_PASSWORD)] = str
+        return self.async_show_form(step_id=step, data_schema=vol.Schema(schema), errors=errors)
 
-        # Pre-fill with current values
-        current_data = config_entry.data
-        # Don't log password for security reasons.
-        redacted_data = {**current_data}
-        if CONF_PASSWORD in redacted_data:
-            redacted_data[CONF_PASSWORD] = "***REDACTED***"
-        _LOGGER.debug("Current config entry data: %s", redacted_data)
-        reconfigure_schema = vol.Schema(
-            {
-                vol.Required(CONF_BASE_URL, default=current_data.get(CONF_BASE_URL)): str,
-                vol.Required(CONF_USERNAME, default=current_data.get(CONF_USERNAME)): str,
-                vol.Optional(CONF_PASSWORD, default=""): str,  # Optional - leave blank to keep current
-            }
-        )
-
-        return self.async_show_form(
-            step_id="reconfigure",
-            data_schema=reconfigure_schema,
-            errors=errors,
-            description_placeholders={
-                "info": "Update your EVC-net connection credentials. Leave password blank to keep current password."
-            },
-        )
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the initial step."""
-        errors: dict[str, str] = {}
-
+    async def async_step_otp(self, user_input=None):
+        errors = {}
+        if self._client is None:
+            return self.async_abort(reason="challenge_expired")
         if user_input is not None:
-            # Validate the user input
-            if not validate_url(user_input[CONF_BASE_URL]):
-                errors["base"] = "invalid_url"
+            try:
+                await self._client.verify_otp(user_input["otp"])
+            except InvalidOtp:
+                errors["base"] = "invalid_otp"
+            except AuthenticationError:
+                # Let the user explicitly restart login, avoiding repeated email requests.
+                return self.async_abort(reason="challenge_expired")
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                errors["base"] = "cannot_connect"
+            except ApiError:
+                errors["base"] = "invalid_response"
             else:
-                try:
-                    session = async_get_clientsession(self.hass)
-                    client = EvcNetApiClient(
-                        user_input[CONF_BASE_URL],
-                        user_input[CONF_USERNAME],
-                        user_input[CONF_PASSWORD],
-                        session,
-                    )
-
-                    # Test authentication
-                    if await client.authenticate():
-                        # Set unique ID based on username and base URL
-                        await self.async_set_unique_id(
-                            f"{user_input[CONF_USERNAME]}_{user_input[CONF_BASE_URL]}"
-                        )
-                        self._abort_if_unique_id_configured()
-
-                        # Store user input for next step
-                        self._user_input = user_input
-
-                        # Move to card ID configuration step
-                        return await self.async_step_card_config()
-                    else:
-                        errors["base"] = "invalid_auth"
-                except aiohttp.ClientError:
-                    errors["base"] = "cannot_connect"
-                except Exception:  # pylint: disable=broad-except
-                    _LOGGER.exception("Unexpected exception")
-                    errors["base"] = "unknown"
-
+                return await self._finish_auth()
         return self.async_show_form(
-            step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
-            errors=errors,
-            description_placeholders={
-                "info": "Enter your EVC-net account credentials"
-            },
-        )
+            step_id="otp", data_schema=vol.Schema({vol.Required("otp"): str}), errors=errors)
 
-    async def async_step_card_config(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the card ID configuration step."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            # Merge with previous input
-            data = {**self._user_input, **user_input}
-
-            # Clean up empty strings
-            if not data.get(CONF_CARD_ID):
-                data.pop(CONF_CARD_ID, None)
-            if not data.get(CONF_CUSTOMER_ID):
-                data.pop(CONF_CUSTOMER_ID, None)
-
-            return self.async_create_entry(
-                title=f"EVC-net ({self._user_input[CONF_USERNAME]})",
-                data=data,
+    async def _finish_auth(self):
+        # Neither the OTP nor the CSRF token is persisted.
+        await self._save(self._client.export_cookies())
+        self._client.session.detach()
+        if self._entry:
+            return self.async_update_reload_and_abort(
+                self._entry, data_updates=self._user_input,
+                reason="reauth_successful" if self._mode == "reauth_confirm" else "reconfigure_successful",
+                reload_even_if_entry_is_unchanged=True,
             )
+        return await self.async_step_card_config()
 
-        return self.async_show_form(
-            step_id="card_config",
-            data_schema=STEP_CARD_DATA_SCHEMA,
-            errors=errors,
-            description_placeholders={
-                "info": (
-                    "Optional: Provide your RFID card ID to enable starting charging sessions from Home Assistant. "
-                    "You can find this by starting a charging session manually and checking the logs, "
-                    "or leave blank and it will be auto-detected from your next charging session."
-                )
-            },
-        )
+    async def async_step_card_config(self, user_input=None):
+        if user_input is not None:
+            data = {**self._user_input, **user_input}
+            for key in (CONF_CARD_ID, CONF_CUSTOMER_ID):
+                if not data.get(key):
+                    data.pop(key, None)
+            return self.async_create_entry(
+                title=f"EVC-net ({data[CONF_USERNAME]})", data=data)
+        return self.async_show_form(step_id="card_config", data_schema=vol.Schema({
+            vol.Optional(CONF_CARD_ID): str, vol.Optional(CONF_CUSTOMER_ID): str}))
 
 
 class EvcNetOptionsFlowHandler(config_entries.OptionsFlow):

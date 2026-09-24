@@ -1,294 +1,281 @@
-"""API client for EVC-net charging stations."""
+"""API client with isolated cookies and explicit EVC-net authentication."""
 import asyncio
 import json
 import logging
+import re
 import time
+from datetime import datetime, timezone
+from email.utils import format_datetime
+from html.parser import HTMLParser
+from http.cookies import CookieError, SimpleCookie
 from typing import Any
-from urllib.parse import quote
 
 import aiohttp
+from yarl import URL
 
 from .const import AJAX_ENDPOINT, LOGIN_ENDPOINT
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class EvcNetApiClient:
-    """API client for EVC-net."""
+class AuthenticationError(Exception):
+    """The user must authenticate again."""
 
-    def __init__(self, base_url: str, username: str, password: str, session: aiohttp.ClientSession) -> None:
-        """Initialize the API client."""
+
+class TwoFactorRequired(AuthenticationError):
+    """An email verification code is required."""
+
+
+class InvalidOtp(AuthenticationError):
+    """The verification code was rejected."""
+
+
+class ApiError(Exception):
+    """Unexpected server response, distinct from an authentication failure."""
+
+
+class _TokenParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.token = None
+
+    def handle_starttag(self, tag, attrs):
+        fields = dict(attrs)
+        if (tag == "input" and fields.get("name") == "_token"
+                and fields.get("type", "").lower() == "hidden"):
+            self.token = fields.get("value")
+
+
+class EvcNetApiClient:
+    """Use a separate cookie jar for each account, never HA's shared jar."""
+
+    def __init__(self, base_url, username, password, session):
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
         self.session = session
+        self._jar = aiohttp.CookieJar()
         self._is_authenticated = False
-        self._phpsessid = None
-        self._serverid = None
-        self._auth_lock = asyncio.Lock()  # Prevent concurrent authentication
-        self._last_auth_attempt = 0  # Track last authentication time
-        self._auth_backoff = 30  # Minimum seconds between auth attempts
+        self._token = None
+        self._lock = asyncio.Lock()
+        self.save_cookies = None
+        self.auth_expired = None
+        self._last_saved = None
 
-    async def authenticate(self) -> bool:
-        """Authenticate with the EVC-net API."""
-        # Use lock to prevent multiple concurrent authentication attempts
-        async with self._auth_lock:
-            # Check if we authenticated recently (backoff mechanism)
-            time_since_last_auth = time.time() - self._last_auth_attempt
-            if self._is_authenticated and time_since_last_auth < self._auth_backoff:
-                _LOGGER.debug(
-                    "Skipping authentication, last attempt was %.1f seconds ago",
-                    time_since_last_auth
-                )
-                return True
+    @property
+    def is_authenticated(self) -> bool:
+        """Whether a session is available; the next API call still validates it."""
+        return self._is_authenticated
 
-            self._last_auth_attempt = time.time()
+    def export_cookies(self):
+        """JSON-safe cookies; Max-Age has already become an absolute expiry."""
+        return [{"name": c.key, "value": c.value,
+                 "attrs": {k: v for k, v in c.items() if v}}
+                for c in self._jar]
 
-            url = f"{self.base_url}{LOGIN_ENDPOINT}"
-
-
-            data = {
-                "emailField": self.username,
-                "passwordField": self.password,
-            }
-
-            # Add browser-like headers
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": url,
-                "Origin": self.base_url,
-                "Connection": "keep-alive",
-            }
-
-            _LOGGER.debug("Login request: POST %s", url)
-            _LOGGER.debug("Login request headers: %s", headers)
-            # Never log credentials; redact email and password
-            _LOGGER.debug(
-                "Request data: %s",
-                {k: ("***" if k in ("emailField", "passwordField") else v) for k, v in data.items()},
-            )
-
-            try:
-                # Don't follow redirects automatically, we need to capture cookies
-                async with self.session.post(
-                    url,
-                    data=data,
-                    headers=headers,
-                    allow_redirects=False  # Don't follow redirects
-                ) as response:
-                    _LOGGER.debug("Login response: POST %s -> %s", url, response.status)
-                    _LOGGER.debug("Login response headers: %s", dict(response.headers))
-
-                    # Login returns 302 redirect
-                    if response.status == 302:
-                        _LOGGER.debug("Received expected 302 redirect")
-                        _LOGGER.debug("Location header: %s", response.headers.get('Location', 'Not present'))
-
-                        # Check cookies after initial POST
-                        if hasattr(self.session, 'cookie_jar'):
-                            cookies = self.session.cookie_jar.filter_cookies(self.base_url)
-                            _LOGGER.debug("Total cookies in jar for %s: %d", self.base_url, len(cookies))
-                            for cookie in cookies.values():
-                                _LOGGER.debug(
-                                    "Cookie found: %s = %s",
-                                    cookie.key,
-                                    cookie.value[:5] + "..." if cookie.key == "PHPSESSID" and cookie.value else (cookie.value or "None"),
-                                )
-                                if cookie.key == 'PHPSESSID':
-                                    self._phpsessid = cookie.value
-                                    _LOGGER.debug(
-                                        "Found PHPSESSID in cookie jar: %s...",
-                                        cookie.value[:5] if cookie.value else "None",
-                                    )
-                                if cookie.key == 'SERVERID':
-                                    self._serverid = cookie.value
-                                    _LOGGER.debug(
-                                        "Found SERVERID in cookie jar: %s",
-                                        cookie.value or "None",
-                                    )
-                        else:
-                            _LOGGER.error("Session does not have cookie_jar attribute!")
-
-                        # If PHPSESSID not found, try to follow the redirect manually
-                        if not self._phpsessid and 'Location' in response.headers:
-                            redirect_url = response.headers['Location']
-                            if not redirect_url.startswith('http'):
-                                # Relative redirect
-                                redirect_url = self.base_url.rstrip('/') + redirect_url
-                            _LOGGER.debug("Login redirect: GET %s", redirect_url)
-                            async with self.session.get(redirect_url, headers=headers, allow_redirects=False) as redirect_response:
-                                _LOGGER.debug("Login redirect response: GET %s -> %s", redirect_url, redirect_response.status)
-                                _LOGGER.debug("Redirect response headers: %s", dict(redirect_response.headers))
-                                if hasattr(self.session, 'cookie_jar'):
-                                    cookies = self.session.cookie_jar.filter_cookies(self.base_url)
-                                    _LOGGER.debug("Total cookies in jar after redirect for %s: %d", self.base_url, len(cookies))
-                                    for cookie in cookies.values():
-                                        _LOGGER.debug(
-                                            "Cookie found after redirect: %s = %s",
-                                            cookie.key,
-                                            cookie.value[:5] + "..." if cookie.key == "PHPSESSID" and cookie.value else (cookie.value or "None"),
-                                        )
-                                        if cookie.key == 'PHPSESSID':
-                                            self._phpsessid = cookie.value
-                                            _LOGGER.debug(
-                                                "Found PHPSESSID in cookie jar after redirect: %s...",
-                                                cookie.value[:5] if cookie.value else "None",
-                                            )
-                                        if cookie.key == 'SERVERID':
-                                            self._serverid = cookie.value
-                                            _LOGGER.debug(
-                                                "Found SERVERID in cookie jar after redirect: %s",
-                                                cookie.value or "None",
-                                            )
-
-                        if self._phpsessid:
-                            self._is_authenticated = True
-                            _LOGGER.info("Successfully authenticated with EVC-net")
-                            _LOGGER.debug(
-                                "PHPSESSID: %s... (length %d)",
-                                self._phpsessid[:5] if self._phpsessid else "None",
-                                len(self._phpsessid) if self._phpsessid else 0,
-                            )
-                            return True
-
-                        _LOGGER.error("No PHPSESSID found after 302 redirect and manual follow-up")
-                        _LOGGER.error("This suggests a cookie handling or login flow issue")
-                        _LOGGER.debug("All response headers: %s", dict(response.headers))
-                        return False
-                    else:
-                        _LOGGER.error("Authentication failed with status %s (expected 302)", response.status)
-                        response_text = await response.text()
-                        _LOGGER.error("Response body (first 500 chars): %s", response_text[:500])
-                        _LOGGER.debug("Full response headers: %s", dict(response.headers))
-                        # Check for common error patterns
-                        if "invalid" in response_text.lower() or "incorrect" in response_text.lower():
-                            _LOGGER.error("Response suggests invalid credentials")
-                        if response.status == 200:
-                            _LOGGER.error("Status 200 suggests credentials were not accepted (should be 302)")
-                        return False
-            except aiohttp.ClientError as err:
-                _LOGGER.error("Error during authentication: %s", err)
-                return False
-            except Exception as err:
-                _LOGGER.error("Unexpected error during authentication: %s", err, exc_info=True)
-                return False
-
-    async def _make_ajax_request(self, requests_payload: dict, _retry_count: int = 0) -> dict[str, Any]:
-        """Make an AJAX request to the EVC-net API.
-
-        Args:
-            requests_payload: The payload to send
-            _retry_count: Internal retry counter to prevent infinite recursion
-        """
-        # Prevent infinite recursion - allow only 1 retry
-        if _retry_count > 1:
-            raise Exception("Max retries exceeded for API request")
-
-        if not self._is_authenticated:
-            if not await self.authenticate():
-                raise Exception("Failed to authenticate")
-
-        url = f"{self.base_url}{AJAX_ENDPOINT}"
-
-        # Prepare headers with cookie
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-
-        cookies = {
-            "PHPSESSID": self._phpsessid,
-            "SERVERID": self._serverid if self._serverid else ""
-        }
-
-        # Convert requests payload to JSON string and send as form data
-        data = {
-            "requests": json.dumps(requests_payload)
-        }
-
-        handler = requests_payload.get("0", {}).get("handler", "unknown")
-        method = requests_payload.get("0", {}).get("method", "unknown")
-        _LOGGER.debug("AJAX request: POST %s [handler=%s, method=%s]", url, handler, method)
-        _LOGGER.debug("AJAX request payload: %s", requests_payload)
-        _LOGGER.debug("PHPSESSID present: %s", bool(self._phpsessid))
-
+    def restore_cookies(self, cookies):
+        """Restore without restarting the original lifetime."""
+        self._jar.clear()
+        self._is_authenticated = False
         try:
-            async with self.session.post(url, headers=headers, cookies=cookies, data=data) as response:
-                _LOGGER.debug(
-                    "EVC-net API: %s.%s -> %s",
-                    handler.split("\\")[-1] if "\\" in handler else handler,
-                    method,
-                    response.status,
-                )
-                _LOGGER.debug("AJAX response: POST %s -> %s", url, response.status)
-                _LOGGER.debug("Response content-type: %s", response.headers.get("Content-Type", "unknown"))
-                # Check content type before trying to parse JSON
-                content_type = response.headers.get('Content-Type', '')
+            for item in cookies:
+                cookie = SimpleCookie()
+                cookie[item["name"]] = item["value"]
+                for key, value in item["attrs"].items():
+                    cookie[item["name"]][key] = value
+                self._jar.update_cookies(cookie, URL(self.base_url))
+        except (KeyError, TypeError, ValueError, CookieError, AttributeError):
+            self._jar.clear()
+            _LOGGER.warning("Stored EVC-net cookies are invalid; authenticate again")
+            return
+        self._is_authenticated = bool(self._jar.filter_cookies(URL(self.base_url)).get("PHPSESSID"))
 
-                if response.status == 200:
-                    if 'application/json' in content_type or 'text/html' in content_type:
-                        # Try to parse as JSON first
-                        try:
-                            response_text = await response.text()
+    async def _persist(self):
+        cookies = self.export_cookies()
+        if self.save_cookies and cookies != self._last_saved:
+            await self.save_cookies(cookies)
+            self._last_saved = cookies
 
-                            # Check if response looks like JSON
-                            if response_text.strip().startswith('[') or response_text.strip().startswith('{'):
-                                return json.loads(response_text)
-                            else:
-                                # It's HTML, session expired
-                                _LOGGER.warning(
-                                    "Received HTML instead of JSON (status %s, content-type: %s), "
-                                    "session likely expired. Re-authenticating... (retry %d)",
-                                    response.status,
-                                    content_type,
-                                    _retry_count
-                                )
-                                _LOGGER.debug("HTML response (first 300 chars): %s", response_text[:300])
-                                self._is_authenticated = False
+    async def _expired(self):
+        self._is_authenticated = False
+        self._jar.clear()
+        await self._persist()
+        if self.auth_expired:
+            self.auth_expired()
+        _LOGGER.info("EVC-net session expired; authentication is required")
+        raise AuthenticationError("EVC-net session expired")
 
-                                # Try to re-authenticate
-                                if await self.authenticate():
-                                    # Retry the request once with incremented counter
-                                    return await self._make_ajax_request(requests_payload, _retry_count + 1)
+    async def _request(self, method, path, **kwargs):
+        """Capture every Set-Cookie, including redirects, without leaking secrets."""
+        url = URL(self.base_url + path)
+        async with self.session.request(
+            method, url, cookies=self._jar.filter_cookies(url),
+            allow_redirects=False, timeout=aiohttp.ClientTimeout(total=30), **kwargs
+        ) as response:
+            for source in response.cookies.values():
+                cookie = SimpleCookie()
+                cookie[source.key] = source.value
+                target = cookie[source.key]
+                for key, value in source.items():
+                    target[key] = value
+                # Scope persisted cookies to this origin. No cross-origin redirects.
+                if target["domain"] and not (
+                    url.host == target["domain"].lstrip(".")
+                    or url.host.endswith("." + target["domain"].lstrip("."))
+                ):
+                    continue
+                target["domain"] = ""
+                if target["max-age"]:
+                    try:
+                        expiry = time.time() + int(target["max-age"])
+                        target["expires"] = format_datetime(
+                            datetime.fromtimestamp(max(0, expiry), timezone.utc), usegmt=True)
+                        target["max-age"] = ""
+                    except (ValueError, OverflowError):
+                        target["max-age"] = ""
+                self._jar.update_cookies(cookie, url)
+            body = await response.text()
+            location = response.headers.get("Location")
+            status = response.status
+        if self._is_authenticated:
+            await self._persist()
+        if status >= 500 or status == 429:
+            raise ApiError(f"EVC-net temporarily unavailable (HTTP {status})")
+        return status, location, body
 
-                                raise Exception("Re-authentication failed or still getting HTML response")
-                        except json.JSONDecodeError as err:
-                            _LOGGER.error("Failed to decode JSON response: %s", err)
-                            _LOGGER.debug("Response text: %s", response_text[:500])
-                            raise
-                    else:
-                        raise Exception(f"Unexpected content type: {content_type}")
+    def _redirect(self, location):
+        if not location:
+            raise ApiError("Missing redirect destination")
+        url = URL(self.base_url + "/").join(URL(location))
+        if url.origin() != URL(self.base_url).origin():
+            raise ApiError("Unexpected cross-origin redirect")
+        return url.path.rstrip("/") or "/"
 
-                elif response.status in [401, 302]:
-                    # Session expired, re-authenticate
-                    _LOGGER.info(
-                        "Session expired (status %s), re-authenticating (retry %d)",
-                        response.status,
-                        _retry_count,
-                    )
-                    self._is_authenticated = False
-                    if await self.authenticate():
-                        # Retry the request with incremented counter
-                        return await self._make_ajax_request(requests_payload, _retry_count + 1)
-                    raise Exception("Re-authentication failed")
-                else:
-                    response_text = await response.text()
-                    _LOGGER.error(
-                        "Request failed with status %s, response: %s",
-                        response.status,
-                        response_text[:200]
-                    )
-                    raise Exception(f"Request failed with status {response.status}")
-        except aiohttp.ClientTimeout as err:
-            _LOGGER.error("Request timeout: %s", err)
-            raise Exception("Request timeout") from err
-        except aiohttp.ClientConnectorError as err:
-            _LOGGER.error("Connection error: %s", err)
-            raise Exception("Cannot connect to EVC-net") from err
-        except aiohttp.ClientError as err:
-            _LOGGER.error("HTTP client error: %s", err)
-            raise Exception(f"HTTP error: {err}") from err
+    async def _get_token(self):
+        status, location, body = await self._request("GET", "/2fa")
+        if location or status in (401, 403):
+            raise AuthenticationError("Verification session expired; restart login")
+        if status != 200:
+            raise ApiError("Unable to load verification form")
+        parser = _TokenParser()
+        parser.feed(body)
+        if not parser.token:
+            raise ApiError("Verification form has no CSRF token")
+        self._token = parser.token
+
+    async def authenticate(self):
+        async with self._lock:
+            self._is_authenticated = False
+            self._jar.clear()
+            self._token = None
+            status, location, _ = await self._request("POST", LOGIN_ENDPOINT, data={
+                "emailField": self.username, "passwordField": self.password})
+            if status not in (302, 303):
+                raise AuthenticationError("Login rejected")
+            path = self._redirect(location)
+            if path == "/2fa":
+                await self._get_token()
+                raise TwoFactorRequired("Email verification required")
+            if path not in ("/", "/Overview"):
+                raise AuthenticationError("Login rejected")
+            await self._validate()
+            return True
+
+    async def verify_otp(self, code):
+        if not re.fullmatch(r"[0-9]{6}", code):
+            raise InvalidOtp("Enter six digits")
+        async with self._lock:
+            if not self._token:
+                raise AuthenticationError("Restart login to request a verification code")
+            form = aiohttp.FormData()
+            for name, value in (("_token", self._token), ("_auth_code", code), ("VerifyOtp", "Verify")):
+                form.add_field(name, value, content_type="text/plain")
+            status, location, _ = await self._request("POST", "/2fa_check", data=form)
+            if status in (302, 303):
+                path = self._redirect(location)
+                if path in ("/", "/Overview"):
+                    await self._validate()
+                    self._token = None
+                    return True
+                if path != "/2fa":
+                    raise AuthenticationError("Verification session expired; restart login")
+            elif status not in (200, 400, 403, 422):
+                raise ApiError("Unexpected verification response")
+            await self._get_token()
+            raise InvalidOtp("Verification code rejected or expired")
+
+    async def _check_page(self):
+        path = "/Overview"
+        for _ in range(4):
+            status, location, body = await self._request("GET", path)
+            if status in (301, 302, 303, 307, 308):
+                path = self._redirect(location)
+                if path.lower().startswith("/login") or path == "/2fa":
+                    await self._expired()
+                if path not in ("/", "/Overview"):
+                    raise ApiError("Unexpected dashboard redirect")
+                continue
+            if status in (401, 403) or re.search(
+                r'emailField|passwordField|_auth_code|action=[\"\']/?2fa_check', body, re.I
+            ):
+                await self._expired()
+            if status != 200 or not body.strip():
+                raise ApiError("Unable to validate dashboard")
+            return
+        raise ApiError("Too many dashboard redirects")
+
+    async def _validate(self):
+        await self._check_page()
+        if not self._jar.filter_cookies(URL(self.base_url)).get("PHPSESSID"):
+            raise AuthenticationError("Session cookie missing")
+        await self._ajax(self._spots_payload())
+        self._is_authenticated = True
+        await self._persist()
+        _LOGGER.info("EVC-net authentication validated")
+
+    @staticmethod
+    def _spots_payload():
+        return {"0": {"handler": "\\LMS\\EV\\AsyncServices\\DashboardAsyncService",
+                      "method": "networkOverview", "params": {"mode": "id"}}}
+
+    async def _ajax(self, payload):
+        status, location, body = await self._request(
+            "POST", AJAX_ENDPOINT, data={"requests": json.dumps(payload)})
+        if status in (401, 403):
+            await self._expired()
+        if location:
+            path = self._redirect(location)
+            if path == "/2fa" or path.lower().startswith("/login") or path == "/":
+                await self._expired()
+            raise ApiError("Unexpected API redirect")
+        if status != 200:
+            raise ApiError(f"API request failed (HTTP {status})")
+        try:
+            result = json.loads(body)
+        except ValueError as err:
+            if re.search(r"emailField|passwordField|_auth_code|/2fa", body, re.I):
+                await self._expired()
+            await self._check_page()
+            raise ApiError("API returned invalid JSON") from err
+        # The AJAX batch protocol returns a list. Never accept an error object as data.
+        if not isinstance(result, list) or not result:
+            await self._check_page()
+            raise ApiError("Invalid AJAX batch response")
+        if not result[0]:
+            # Empty data also occurs for a pre-authenticated/expired session.
+            await self._check_page()
+        if payload.get("0", {}).get("method") == "networkOverview":
+            if not isinstance(result[0], list) or any(
+                not isinstance(spot, dict) or "IDX" not in spot for spot in result[0]
+            ):
+                raise ApiError("Invalid charge spots response")
+        return result
+
+    async def _make_ajax_request(self, requests_payload, _retry_count=0):
+        async with self._lock:
+            if not self._is_authenticated:
+                await self._expired()
+            return await self._ajax(requests_payload)
 
     async def get_charge_spots(self) -> dict[str, Any]:
         """Get list of charging spots."""

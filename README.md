@@ -1,5 +1,7 @@
 # EVC-net (Last Mile Solutions) Charging Station Integration for Home Assistant
 
+> **2FA fork candidate — 1.0.2-beta.1.** See [2FA installation and release instructions](TWO_FACTOR.md) before installing. This branch adds email OTP and persistent sessions; existing entities and services retain their identifiers.
+
 This custom integration allows you to monitor and control your EVC-net (Last Mile Solutions) charging station through Home Assistant.
 
 ## Disclaimer
@@ -17,30 +19,13 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 - **Real-time updates**: Automatic polling every 30 seconds; use the Refresh Status button or action for an immediate update
 - **Action calls**: Start/stop charging, refresh status, reset, unlock connector, block/unblock (with optional RFID card for start)
 
-## Installation
+## Installation — email-2FA fork
 
-### HACS default repository (Recommended)
-
-1. Make sure [HACS](https://hacs.xyz/) is installed
-2. In HACS, search for "EVC-net (Last Mile Solutions)"
-3. Open the overflow menu (⋮) and click "Download"
-4. In the pop-up, you can select a specific version to install, or leave it empty to install the latest version
-5. Click "Download" to install the integration
-6. Restart Home Assistant
-
-### HACS custom repository
-
-1. Make sure [HACS](https://hacs.xyz/) is installed
-2. Add this repository as a custom repository in HACS:
-   - Go to HACS → Integrations → ⋮ (top right) → Custom repositories
-   - Add `https://github.com/Platzii/homeassistant-evcnet` as Integration
-3. Click Install
-4. Restart Home Assistant
-
-### Manual Installation
-
-1. Copy the `custom_components/evcnet` folder to your Home Assistant's `custom_components` directory
-2. Restart Home Assistant
+Use [the fork installation guide](TWO_FACTOR.md). Add
+`https://github.com/mcostantini70/homeassistant-evcnet` to HACS as a custom
+**Integration** repository and select the `v1.0.2-beta.1` prerelease.
+Back up Home Assistant first and keep the existing EVC-net configuration entry.
+Do not let HACS manage both the upstream and this fork for the same `evcnet` domain.
 
 ## Configuration
 
