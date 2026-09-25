@@ -95,12 +95,16 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await self._client.authenticate()
                 except TwoFactorRequired:
                     return await self.async_step_otp()
-                except AuthenticationError:
+                except AuthenticationError as err:
+                    _LOGGER.warning("EVC-net authentication rejected [%s]; response metadata: %s",
+                                    type(err).__name__, self._client.last_response)
                     errors["base"] = "invalid_auth"
                 except (aiohttp.ClientError, asyncio.TimeoutError):
                     errors["base"] = "cannot_connect"
-                except ApiError:
-                    errors["base"] = "invalid_response"
+                except ApiError as err:
+                    _LOGGER.warning("EVC-net login failed [%s]: %s; response metadata: %s",
+                                    err.code, err, self._client.last_response)
+                    errors["base"] = err.code
                 else:
                     return await self._finish_auth()
         # Reauth keeps account identity fixed; a blank password reuses the saved one.
@@ -128,8 +132,10 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="challenge_expired")
             except (aiohttp.ClientError, asyncio.TimeoutError):
                 errors["base"] = "cannot_connect"
-            except ApiError:
-                errors["base"] = "invalid_response"
+            except ApiError as err:
+                _LOGGER.warning("EVC-net OTP failed [%s]: %s; response metadata: %s",
+                                err.code, err, self._client.last_response)
+                errors["base"] = err.code
             else:
                 return await self._finish_auth()
         return self.async_show_form(

@@ -48,7 +48,13 @@
       "invalid_url": "Enter an HTTPS origin, without a path, query or credentials.",
       "unknown": "Unexpected error occurred",
       "invalid_otp": "Invalid or expired code. Try again or restart authentication.",
-      "invalid_response": "Unexpected response from EVC-net. Please try again later."
+      "invalid_response": "Unexpected response from EVC-net. The EVC-net log entry contains the request step and HTTP status, without credentials.",
+      "server_error": "EVC-net returned a server error (HTTP 5xx). Check the EVC-net log entry for the exact status and request step.",
+      "rate_limited": "EVC-net is limiting login requests (HTTP 429). Wait before trying again.",
+      "missing_redirect": "The login redirect has no destination. Check the EVC-net log entry.",
+      "cross_origin_redirect": "EVC-net redirected to a different website address. Check the configured base URL; for 50five NL use https://50five-snl.evc-net.com.",
+      "missing_otp_token": "The verification page does not contain the expected hidden _token field. Check the EVC-net log entry.",
+      "otp_page_unavailable": "The email verification page could not be loaded. Check the EVC-net log entry."
     },
     "abort": {
       "already_configured": "This account is already configured",

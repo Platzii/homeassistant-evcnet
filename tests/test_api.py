@@ -296,3 +296,32 @@ async def test_corrupt_cookie_storage_requests_fresh_auth(server, cookies):
     client.restore_cookies(cookies)
     assert not client.is_authenticated
     assert client.export_cookies() == []
+
+
+async def test_server_error_has_safe_diagnostics(server, caplog):
+    client, state, _ = server
+    caplog.set_level("DEBUG", logger="custom_components.evcnet.api")
+    state["override"] = lambda req: web.Response(status=500, text="private-response-body", headers={"Set-Cookie": "PHPSESSID=private-cookie", "Location": "https://other.invalid/?token=private-query"})
+    with pytest.raises(ApiError) as error:
+        await client.authenticate()
+    assert error.value.code == "server_error"
+    assert client.last_response == {"method": "POST", "path": "/Login/Login", "status": 500, "redirect": "different_origin", "redirect_origin": "https://other.invalid"}
+    for secret in ("private-response-body", "private-cookie", "private-query", "test-password", "test@example.invalid"):
+        assert secret not in caplog.text
+
+
+async def test_missing_token_has_specific_error(server):
+    client, state, _ = server
+    state["bad_token"] = True
+    with pytest.raises(ApiError) as error:
+        await client.authenticate()
+    assert error.value.code == "missing_otp_token"
+    assert client.last_response["path"] == "/2fa"
+
+
+async def test_cross_origin_has_specific_error(server):
+    client, state, _ = server
+    state["override"] = lambda req: web.Response(status=302, headers={"Location": "https://other.invalid/2fa"})
+    with pytest.raises(ApiError) as error:
+        await client.authenticate()
+    assert error.value.code == "cross_origin_redirect"

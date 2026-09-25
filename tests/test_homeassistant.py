@@ -23,6 +23,12 @@ pytestmark = pytest.mark.asyncio
 DATA = {"base_url": "https://test.evc-net.com", "username": "test@example.invalid", "password": "saved-password"}
 
 
+def test_default_base_url_is_50five_nl():
+    from custom_components.evcnet.const import DEFAULT_BASE_URL
+
+    assert DEFAULT_BASE_URL == "https://50five-snl.evc-net.com"
+
+
 @pytest_asyncio.fixture
 async def flow(tmp_path, monkeypatch):
     result = config_flow.EvcNetConfigFlow()
@@ -198,3 +204,15 @@ async def test_setup_restores_session_without_login(tmp_path, monkeypatch, has_s
     client.authenticate.assert_not_awaited()
     client.auth_expired()
     entry.async_start_reauth.assert_called_once_with(hass)
+
+
+async def test_login_exposes_specific_safe_error(flow, caplog):
+    result, client, _ = flow
+    client.authenticate.side_effect = ApiError("EVC-net temporarily unavailable (HTTP 500)", code="server_error")
+    client.last_response = {"method": "POST", "path": "/Login/Login", "status": 500, "redirect": "none"}
+    step = await result.async_step_user(DATA)
+    assert step["errors"] == {"base": "server_error"}
+    assert "HTTP 500" in caplog.text
+    assert "/Login/Login" in caplog.text
+    assert DATA["password"] not in caplog.text
+    assert DATA["username"] not in caplog.text

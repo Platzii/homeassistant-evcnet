@@ -31,7 +31,11 @@ class InvalidOtp(AuthenticationError):
 
 
 class ApiError(Exception):
-    """Unexpected server response, distinct from an authentication failure."""
+    """Unexpected server response with a safe, user-visible diagnostic code."""
+
+    def __init__(self, message="Unexpected server response", *, code="invalid_response"):
+        super().__init__(message)
+        self.code = code
 
 
 class _TokenParser(HTMLParser):
@@ -61,6 +65,7 @@ class EvcNetApiClient:
         self.save_cookies = None
         self.auth_expired = None
         self._last_saved = None
+        self.last_response = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -112,6 +117,7 @@ class EvcNetApiClient:
             method, url, cookies=self._jar.filter_cookies(url),
             allow_redirects=False, timeout=aiohttp.ClientTimeout(total=30), **kwargs
         ) as response:
+            set_cookie_names = list(response.cookies.keys())
             for source in response.cookies.values():
                 cookie = SimpleCookie()
                 cookie[source.key] = source.value
@@ -137,18 +143,47 @@ class EvcNetApiClient:
             body = await response.text()
             location = response.headers.get("Location")
             status = response.status
+        redirect_kind = "none"
+        redirect_origin = None
+        if location:
+            try:
+                target_url = URL(self.base_url + "/").join(URL(location))
+                redirect_origin = f"{target_url.scheme}://{target_url.host}"
+                if target_url.port:
+                    redirect_origin += f":{target_url.port}"
+                if target_url.origin() != URL(self.base_url).origin():
+                    redirect_kind = "different_origin"
+                elif target_url.path.rstrip("/") == "/2fa":
+                    redirect_kind = "otp"
+                elif target_url.path.lower().startswith("/login"):
+                    redirect_kind = "login"
+                elif target_url.path.rstrip("/") in ("", "/Overview"):
+                    redirect_kind = "dashboard"
+                else:
+                    redirect_kind = "other"
+            except ValueError:
+                redirect_kind = "invalid"
+        self.last_response = {"method": method, "path": path, "status": status,
+                              "redirect": redirect_kind,
+                              "redirect_origin": redirect_origin,
+                              "set_cookie_names": set_cookie_names}
+        _LOGGER.debug("EVC-net response metadata: %s", self.last_response)
         if self._is_authenticated:
             await self._persist()
         if status >= 500 or status == 429:
-            raise ApiError(f"EVC-net temporarily unavailable (HTTP {status})")
+            raise ApiError(f"EVC-net temporarily unavailable (HTTP {status})",
+                           code="rate_limited" if status == 429 else "server_error")
         return status, location, body
 
     def _redirect(self, location):
         if not location:
-            raise ApiError("Missing redirect destination")
+            raise ApiError("Missing redirect destination", code="missing_redirect")
         url = URL(self.base_url + "/").join(URL(location))
+        if (url.host == URL(self.base_url).host and url.scheme == "http"
+                and url.port in (None, 80)):
+            url = url.with_scheme("https")
         if url.origin() != URL(self.base_url).origin():
-            raise ApiError("Unexpected cross-origin redirect")
+            raise ApiError("Unexpected cross-origin redirect", code="cross_origin_redirect")
         return url.path.rstrip("/") or "/"
 
     async def _get_token(self):
@@ -156,11 +191,11 @@ class EvcNetApiClient:
         if location or status in (401, 403):
             raise AuthenticationError("Verification session expired; restart login")
         if status != 200:
-            raise ApiError("Unable to load verification form")
+            raise ApiError("Unable to load verification form", code="otp_page_unavailable")
         parser = _TokenParser()
         parser.feed(body)
         if not parser.token:
-            raise ApiError("Verification form has no CSRF token")
+            raise ApiError("Verification form has no CSRF token", code="missing_otp_token")
         self._token = parser.token
 
     async def authenticate(self):
@@ -168,8 +203,20 @@ class EvcNetApiClient:
             self._is_authenticated = False
             self._jar.clear()
             self._token = None
-            status, location, _ = await self._request("POST", LOGIN_ENDPOINT, data={
-                "emailField": self.username, "passwordField": self.password})
+            login_data = aiohttp.FormData()
+            login_data.add_field("emailField", self.username, content_type="text/plain")
+            login_data.add_field("passwordField", self.password, content_type="text/plain")
+            login_data.add_field("Login", "Login", content_type="text/plain")
+            login_page_status, _, login_page = await self._request("GET", LOGIN_ENDPOINT)
+            if login_page_status == 200:
+                parser = _TokenParser()
+                parser.feed(login_page)
+                if parser.token:
+                    login_data.add_field("_token", parser.token, content_type="text/plain")
+            status, location, _ = await self._request(
+                "POST", LOGIN_ENDPOINT, data=login_data,
+                headers={"Origin": self.base_url, "Referer": f"{self.base_url}/Login/Login"},
+            )
             if status not in (302, 303):
                 raise AuthenticationError("Login rejected")
             path = self._redirect(location)
@@ -178,6 +225,12 @@ class EvcNetApiClient:
                 raise TwoFactorRequired("Email verification required")
             if path not in ("/", "/Overview"):
                 raise AuthenticationError("Login rejected")
+            status, location, _ = await self._request("GET", "/Overview")
+            if status in (301, 302, 303, 307, 308):
+                next_path = self._redirect(location)
+                if next_path == "/2fa":
+                    await self._get_token()
+                    raise TwoFactorRequired("Email verification required")
             await self._validate()
             return True
 
@@ -190,7 +243,10 @@ class EvcNetApiClient:
             form = aiohttp.FormData()
             for name, value in (("_token", self._token), ("_auth_code", code), ("VerifyOtp", "Verify")):
                 form.add_field(name, value, content_type="text/plain")
-            status, location, _ = await self._request("POST", "/2fa_check", data=form)
+            status, location, _ = await self._request(
+                "POST", "/2fa_check", data=form,
+                headers={"Origin": self.base_url, "Referer": f"{self.base_url}/2fa"},
+            )
             if status in (302, 303):
                 path = self._redirect(location)
                 if path in ("/", "/Overview"):
