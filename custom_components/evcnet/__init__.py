@@ -3,14 +3,17 @@ import asyncio
 import logging
 from typing import Any
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import config_validation as cv, entity_registry as er, service
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import service
 from homeassistant.helpers.typing import ConfigType
 
-from .api import EvcNetApiClient
+from .api import ApiError, AuthenticationError
 from .const import (
     ACTION_SETTLE_DELAY_SEC,
     CONF_BASE_URL,
@@ -19,6 +22,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import EvcNetCoordinator
+from .session import create_client
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -246,18 +250,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return False
 
-    session = async_get_clientsession(hass)
-
-    client = EvcNetApiClient(
-        entry.data[CONF_BASE_URL],
-        entry.data[CONF_USERNAME],
-        entry.data[CONF_PASSWORD],
-        session,
-    )
+    client, store, save = create_client(hass, entry.data)
+    client.save_cookies = save
+    client.auth_expired = lambda: entry.async_start_reauth(hass)
+    try:
+        saved = await store.async_load()
+        if saved:
+            client.restore_cookies(saved.get("cookies", []))
+        if not client.is_authenticated:
+            raise AuthenticationError("No saved session; authenticate through Home Assistant")
+    except AuthenticationError as err:
+        raise ConfigEntryAuthFailed("EVC-net authentication required") from err
+    except (aiohttp.ClientError, asyncio.TimeoutError, ApiError) as err:
+        raise ConfigEntryNotReady("Cannot connect to EVC-net") from err
 
     # Read max channels from options; default to DEFAULT_MAX_CHANNELS
     max_channels = int(entry.options.get(CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS))
-    coordinator = EvcNetCoordinator(hass, client, max_channels=max_channels)
+    coordinator = EvcNetCoordinator(hass, client, max_channels=max_channels, config_entry=entry)
 
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()

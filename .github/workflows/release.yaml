@@ -7,7 +7,6 @@ on:
 
 jobs:
   release:
-    if: github.repository_owner == 'Platzii'
     name: Release
     runs-on: ubuntu-latest
     permissions:
@@ -23,4 +22,5 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v2.4.1
       with:
+        prerelease: ${{ contains(github.ref_name, 'beta') }}
         files: ${{ github.workspace }}/custom_components/evcnet/homeassistant-evcnet.zip

@@ -9,7 +9,7 @@ CONF_CUSTOMER_ID = "customer_id"
 CONF_MAX_CHANNELS = "max_channels"
 
 # Default values
-DEFAULT_BASE_URL = "https://50five-sbelux.evc-net.com"
+DEFAULT_BASE_URL = "https://50five-snl.evc-net.com"
 DEFAULT_SCAN_INTERVAL = 30  # seconds
 DEFAULT_MAX_CHANNELS = 1
 ACTION_SETTLE_DELAY_SEC = 3 # Seconds to wait after start/stop/action before refreshing coordinator data

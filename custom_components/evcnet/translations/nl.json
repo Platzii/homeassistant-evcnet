@@ -1,0 +1,13 @@
+{
+  "config": {
+    "error": {
+      "invalid_response": "Onverwacht antwoord van EVC-net. Bekijk het logbericht voor de login-stap en HTTP-status.",
+      "server_error": "EVC-net geeft een serverfout (HTTP 5xx).",
+      "rate_limited": "EVC-net beperkt het aantal loginpogingen (HTTP 429).",
+      "missing_redirect": "De login-doorverwijzing bevat geen bestemming.",
+      "cross_origin_redirect": "EVC-net verwijst naar een ander websiteadres. Controleer de basis-URL.",
+      "missing_otp_token": "Op de verificatiepagina ontbreekt het verwachte _token-veld.",
+      "otp_page_unavailable": "De pagina voor de e-mailcode kon niet worden geladen."
+    }
+  }
+}

@@ -1,12 +1,13 @@
 """DataUpdateCoordinator for EVC-net."""
-from datetime import timedelta
 import logging
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import EvcNetApiClient
+from .api import AuthenticationError, EvcNetApiClient
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -15,12 +16,13 @@ _LOGGER = logging.getLogger(__name__)
 class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching EVC-net data."""
 
-    def __init__(self, hass: HomeAssistant, client: EvcNetApiClient, max_channels: int = 1) -> None:
+    def __init__(self, hass: HomeAssistant, client: EvcNetApiClient, max_channels: int = 1, config_entry=None) -> None:
         """Initialize coordinator."""
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
+            config_entry=config_entry,
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
         self.client = client
@@ -88,6 +90,8 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         ch_str = str(ch)
                         try:
                             ch_log = await self.client.get_spot_log(spot_id, ch_str)
+                        except AuthenticationError:
+                            raise
                         except Exception as log_err:
                             _LOGGER.debug(
                                 "Failed to fetch log for spot %s channel %s: %s (continuing)",
@@ -114,13 +118,15 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "log": log_data,
                         "channels": channels,
                     }
+                except AuthenticationError:
+                    raise
                 except Exception as err:
                     _LOGGER.debug(
                         "Failed to fetch data for spot %s: %s (will retry next update)",
                         spot_id, err
                     )
                     # Keep existing data if available, otherwise use basic info
-                    if spot_id in self.data:
+                    if spot_id in (self.data or {}):
                         data[spot_id] = self.data[spot_id]
                     else:
                         data[spot_id] = {
@@ -133,5 +139,7 @@ class EvcNetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             return data
 
+        except AuthenticationError as err:
+            raise ConfigEntryAuthFailed("EVC-net session expired; authenticate again") from err
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err

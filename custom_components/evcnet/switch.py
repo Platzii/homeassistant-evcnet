@@ -11,11 +11,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ACTION_SETTLE_DELAY_SEC,
+    CHARGESPOT_STATUS1_FLAGS,
+    CHARGESPOT_STATUS2_FLAGS,
     CONF_CARD_ID,
     CONF_CUSTOMER_ID,
     DOMAIN,
-    CHARGESPOT_STATUS1_FLAGS,
-    CHARGESPOT_STATUS2_FLAGS,
 )
 from .coordinator import EvcNetCoordinator
 
