@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - Unreleased
+
+The old EVC-net web portal login no longer works. This release moves the integration to the GraphQL API used by the 50five app.
+
+### Changed
+- **New API**: Log in with your 50five account credentials. The base URL and customer ID settings have been removed; existing configurations are migrated automatically.
+- **Status / Status Code** sensors now show the channel status (`Charging`, `Available`, ...) and detailed status names instead of a hexadecimal status code.
+- **Log sensors** now show recent charging sessions instead of portal log events. **Last Log Time** is now a timestamp sensor.
+- **Total Energy** is computed from all charging sessions at the station plus the running session.
+- **Current Power** is estimated from the increase of session energy between meter updates, as the API does not report live power.
+- The charge card used to start sessions defaults to the card linked to the charging station.
+
+### Added
+- Re-authentication flow when the stored password is rejected.
+- `scripts/test_api.py` to test the API client without Home Assistant.
+
+### Removed
+- **Block / Unblock** buttons and actions (not available in the new API). Existing block/unblock entities are removed automatically.
+
+### Fixed
+- Pass the config entry to the data update coordinator explicitly (required since Home Assistant 2026.8).
+
 ## [1.0.1] - 2026-02-19
 
 ### Fixed

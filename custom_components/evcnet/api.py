@@ -1,497 +1,302 @@
-"""API client for EVC-net charging stations."""
+"""API client for the 50five / Last Mile Solutions GraphQL API.
+
+This module has no Home Assistant dependencies so it can be used and tested standalone.
+"""
 import asyncio
-import json
 import logging
 import time
 from typing import Any
-from urllib.parse import quote
 
 import aiohttp
 
-from .const import AJAX_ENDPOINT, LOGIN_ENDPOINT
-
 _LOGGER = logging.getLogger(__name__)
+
+GRAPHQL_URL = "https://lms.servicelayer.platform-01.plugz.dev/graphql"
+APPLICATION_ID = "com.plugz.app50five"
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+# Seconds before token expiry at which we proactively log in again
+TOKEN_EXPIRY_MARGIN = 300
+
+STATION_FIELDS = """
+    id
+    name
+    commId
+    reference
+    state
+    softwareVersion
+    physicalNumber
+    gpsAddress
+    gpsCity
+    lastCommunicationDate
+    manufacturerType { vendor model }
+    accessOptions { accessType authorizationMode chargeCard publishedOnMap }
+    channels {
+        id
+        channelNo
+        evseId
+        globalStatus
+        statuses
+        lastStatusChangeDate
+        power
+        amp
+        phases
+        connectorType
+        capabilities
+    }
+"""
+
+TRANSACTION_FIELDS = """
+    transactionId
+    transactionStatus
+    energyDelivered
+    durationCharging
+    durationIdle
+    startDate
+    endDate
+    updateDate
+    channelId
+    evseId
+    loyaltyCardIdentifier
+    loyaltyCardType
+    totalAmount
+    currency
+"""
+
+# Everything the coordinator needs on each poll, in a single request
+POLL_QUERY = f"""
+query Poll($start: Float!, $end: Float!) {{
+    getCustomerChargeStations {{ {STATION_FIELDS} }}
+    lmsActiveTransaction {{ {TRANSACTION_FIELDS} }}
+    lmsTransactions(startResult: $start, endResult: $end) {{
+        hasMore
+        items {{ {TRANSACTION_FIELDS} }}
+    }}
+}}
+"""
+
+TRANSACTIONS_QUERY = f"""
+query Transactions($start: Float!, $end: Float!) {{
+    lmsTransactions(startResult: $start, endResult: $end) {{
+        hasMore
+        items {{ {TRANSACTION_FIELDS} }}
+    }}
+}}
+"""
+
+CARDS_QUERY = """
+query Cards {
+    getCards(filters: {itemsPerPage: 50}) {
+        items { id internalId externalId contractId state type info }
+    }
+}
+"""
+
+LOGIN_MUTATIONS = (
+    "mutation Login($email: String!, $password: String!) "
+    "{ loginFiftyFive(email: $email, password: $password) { access_token expires_in token_type } }",
+    # Deprecated, but kept as fallback in case loginFiftyFive is unavailable for an account
+    "mutation Login($email: String!, $password: String!) "
+    "{ login(email: $email, password: $password) { access_token expires_in token_type } }",
+)
+
+
+class EvcNetError(Exception):
+    """Base error for the API client."""
+
+
+class EvcNetAuthError(EvcNetError):
+    """Authentication failed (invalid credentials or rejected token)."""
+
+
+class EvcNetConnectionError(EvcNetError):
+    """The API could not be reached."""
+
+
+def _is_auth_error(message: str) -> bool:
+    message = message.lower()
+    return "not authorized" in message or "unauthenticated" in message or "invalid credentials" in message
 
 
 class EvcNetApiClient:
-    """API client for EVC-net."""
+    """API client for the 50five GraphQL API."""
 
-    def __init__(self, base_url: str, username: str, password: str, session: aiohttp.ClientSession) -> None:
+    def __init__(self, username: str, password: str, session: aiohttp.ClientSession) -> None:
         """Initialize the API client."""
-        self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
         self.session = session
-        self._is_authenticated = False
-        self._phpsessid = None
-        self._serverid = None
-        self._auth_lock = asyncio.Lock()  # Prevent concurrent authentication
-        self._last_auth_attempt = 0  # Track last authentication time
-        self._auth_backoff = 30  # Minimum seconds between auth attempts
+        self._access_token: str | None = None
+        self._token_expires_at = 0.0
+        self._auth_lock = asyncio.Lock()
 
-    async def authenticate(self) -> bool:
-        """Authenticate with the EVC-net API."""
-        # Use lock to prevent multiple concurrent authentication attempts
+    async def _post(self, query: str, variables: dict[str, Any] | None, token: str | None) -> dict[str, Any]:
+        """Send a GraphQL request and return the decoded JSON body."""
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "plugz-application-id": APPLICATION_ID,
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            async with self.session.post(
+                GRAPHQL_URL,
+                json={"query": query, "variables": variables or {}},
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+            ) as response:
+                if response.status == 401:
+                    raise EvcNetAuthError("Unauthorized (HTTP 401)")
+                if response.status >= 400:
+                    text = await response.text()
+                    raise EvcNetError(f"HTTP {response.status}: {text[:200]}")
+                return await response.json(content_type=None)
+        except (TimeoutError, aiohttp.ClientError) as err:
+            raise EvcNetConnectionError(f"Cannot connect to API: {err}") from err
+
+    async def authenticate(self, force: bool = False) -> bool:
+        """Log in and store the access token. Returns False on invalid credentials."""
         async with self._auth_lock:
-            # Check if we authenticated recently (backoff mechanism)
-            time_since_last_auth = time.time() - self._last_auth_attempt
-            if self._is_authenticated and time_since_last_auth < self._auth_backoff:
-                _LOGGER.debug(
-                    "Skipping authentication, last attempt was %.1f seconds ago",
-                    time_since_last_auth
-                )
+            if not force and self._access_token and time.time() < self._token_expires_at:
                 return True
 
-            self._last_auth_attempt = time.time()
+            variables = {"email": self.username, "password": self.password}
+            last_error = "unknown error"
+            for mutation in LOGIN_MUTATIONS:
+                body = await self._post(mutation, variables, token=None)
+                data = body.get("data") or {}
+                result = data.get("loginFiftyFive") or data.get("login")
+                if result and result.get("access_token"):
+                    self._access_token = result["access_token"]
+                    expires_in = result.get("expires_in") or 3600
+                    self._token_expires_at = time.time() + max(60, int(expires_in) - TOKEN_EXPIRY_MARGIN)
+                    _LOGGER.debug("Logged in, token valid for %s seconds", expires_in)
+                    return True
+                errors = body.get("errors") or []
+                last_error = "; ".join(e.get("message", "") for e in errors) or last_error
+                _LOGGER.debug("Login attempt failed: %s", last_error)
+                if any(_is_auth_error(e.get("message", "")) for e in errors):
+                    # Credentials were rejected; don't hammer the API with the fallback
+                    break
 
-            url = f"{self.base_url}{LOGIN_ENDPOINT}"
+            _LOGGER.error("Authentication failed: %s", last_error)
+            self._access_token = None
+            return False
 
+    async def query(
+        self,
+        query: str,
+        variables: dict[str, Any] | None = None,
+        optional_fields: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        """Run an authenticated GraphQL query and return its data.
 
-            data = {
-                "emailField": self.username,
-                "passwordField": self.password,
-            }
-
-            # Add browser-like headers
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": url,
-                "Origin": self.base_url,
-                "Connection": "keep-alive",
-            }
-
-            _LOGGER.debug("Login request: POST %s", url)
-            _LOGGER.debug("Login request headers: %s", headers)
-            # Never log credentials; redact email and password
-            _LOGGER.debug(
-                "Request data: %s",
-                {k: ("***" if k in ("emailField", "passwordField") else v) for k, v in data.items()},
-            )
+        Errors on fields listed in optional_fields are logged and those fields set to None;
+        errors on any other field raise EvcNetError.
+        """
+        for attempt in range(2):
+            if not await self.authenticate(force=attempt > 0):
+                raise EvcNetAuthError("Invalid credentials")
 
             try:
-                # Don't follow redirects automatically, we need to capture cookies
-                async with self.session.post(
-                    url,
-                    data=data,
-                    headers=headers,
-                    allow_redirects=False  # Don't follow redirects
-                ) as response:
-                    _LOGGER.debug("Login response: POST %s -> %s", url, response.status)
-                    _LOGGER.debug("Login response headers: %s", dict(response.headers))
+                body = await self._post(query, variables, self._access_token)
+            except EvcNetAuthError:
+                if attempt == 0:
+                    continue
+                raise
 
-                    # Login returns 302 redirect
-                    if response.status == 302:
-                        _LOGGER.debug("Received expected 302 redirect")
-                        _LOGGER.debug("Location header: %s", response.headers.get('Location', 'Not present'))
+            errors = body.get("errors") or []
+            if attempt == 0 and any(_is_auth_error(e.get("message", "")) for e in errors):
+                _LOGGER.debug("Token rejected, logging in again")
+                continue
 
-                        # Check cookies after initial POST
-                        if hasattr(self.session, 'cookie_jar'):
-                            cookies = self.session.cookie_jar.filter_cookies(self.base_url)
-                            _LOGGER.debug("Total cookies in jar for %s: %d", self.base_url, len(cookies))
-                            for cookie in cookies.values():
-                                _LOGGER.debug(
-                                    "Cookie found: %s = %s",
-                                    cookie.key,
-                                    cookie.value[:5] + "..." if cookie.key == "PHPSESSID" and cookie.value else (cookie.value or "None"),
-                                )
-                                if cookie.key == 'PHPSESSID':
-                                    self._phpsessid = cookie.value
-                                    _LOGGER.debug(
-                                        "Found PHPSESSID in cookie jar: %s...",
-                                        cookie.value[:5] if cookie.value else "None",
-                                    )
-                                if cookie.key == 'SERVERID':
-                                    self._serverid = cookie.value
-                                    _LOGGER.debug(
-                                        "Found SERVERID in cookie jar: %s",
-                                        cookie.value or "None",
-                                    )
-                        else:
-                            _LOGGER.error("Session does not have cookie_jar attribute!")
-
-                        # If PHPSESSID not found, try to follow the redirect manually
-                        if not self._phpsessid and 'Location' in response.headers:
-                            redirect_url = response.headers['Location']
-                            if not redirect_url.startswith('http'):
-                                # Relative redirect
-                                redirect_url = self.base_url.rstrip('/') + redirect_url
-                            _LOGGER.debug("Login redirect: GET %s", redirect_url)
-                            async with self.session.get(redirect_url, headers=headers, allow_redirects=False) as redirect_response:
-                                _LOGGER.debug("Login redirect response: GET %s -> %s", redirect_url, redirect_response.status)
-                                _LOGGER.debug("Redirect response headers: %s", dict(redirect_response.headers))
-                                if hasattr(self.session, 'cookie_jar'):
-                                    cookies = self.session.cookie_jar.filter_cookies(self.base_url)
-                                    _LOGGER.debug("Total cookies in jar after redirect for %s: %d", self.base_url, len(cookies))
-                                    for cookie in cookies.values():
-                                        _LOGGER.debug(
-                                            "Cookie found after redirect: %s = %s",
-                                            cookie.key,
-                                            cookie.value[:5] + "..." if cookie.key == "PHPSESSID" and cookie.value else (cookie.value or "None"),
-                                        )
-                                        if cookie.key == 'PHPSESSID':
-                                            self._phpsessid = cookie.value
-                                            _LOGGER.debug(
-                                                "Found PHPSESSID in cookie jar after redirect: %s...",
-                                                cookie.value[:5] if cookie.value else "None",
-                                            )
-                                        if cookie.key == 'SERVERID':
-                                            self._serverid = cookie.value
-                                            _LOGGER.debug(
-                                                "Found SERVERID in cookie jar after redirect: %s",
-                                                cookie.value or "None",
-                                            )
-
-                        if self._phpsessid:
-                            self._is_authenticated = True
-                            _LOGGER.info("Successfully authenticated with EVC-net")
-                            _LOGGER.debug(
-                                "PHPSESSID: %s... (length %d)",
-                                self._phpsessid[:5] if self._phpsessid else "None",
-                                len(self._phpsessid) if self._phpsessid else 0,
-                            )
-                            return True
-
-                        _LOGGER.error("No PHPSESSID found after 302 redirect and manual follow-up")
-                        _LOGGER.error("This suggests a cookie handling or login flow issue")
-                        _LOGGER.debug("All response headers: %s", dict(response.headers))
-                        return False
-                    else:
-                        _LOGGER.error("Authentication failed with status %s (expected 302)", response.status)
-                        response_text = await response.text()
-                        _LOGGER.error("Response body (first 500 chars): %s", response_text[:500])
-                        _LOGGER.debug("Full response headers: %s", dict(response.headers))
-                        # Check for common error patterns
-                        if "invalid" in response_text.lower() or "incorrect" in response_text.lower():
-                            _LOGGER.error("Response suggests invalid credentials")
-                        if response.status == 200:
-                            _LOGGER.error("Status 200 suggests credentials were not accepted (should be 302)")
-                        return False
-            except aiohttp.ClientError as err:
-                _LOGGER.error("Error during authentication: %s", err)
-                return False
-            except Exception as err:
-                _LOGGER.error("Unexpected error during authentication: %s", err, exc_info=True)
-                return False
-
-    async def _make_ajax_request(self, requests_payload: dict, _retry_count: int = 0) -> dict[str, Any]:
-        """Make an AJAX request to the EVC-net API.
-
-        Args:
-            requests_payload: The payload to send
-            _retry_count: Internal retry counter to prevent infinite recursion
-        """
-        # Prevent infinite recursion - allow only 1 retry
-        if _retry_count > 1:
-            raise Exception("Max retries exceeded for API request")
-
-        if not self._is_authenticated:
-            if not await self.authenticate():
-                raise Exception("Failed to authenticate")
-
-        url = f"{self.base_url}{AJAX_ENDPOINT}"
-
-        # Prepare headers with cookie
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-
-        cookies = {
-            "PHPSESSID": self._phpsessid,
-            "SERVERID": self._serverid if self._serverid else ""
-        }
-
-        # Convert requests payload to JSON string and send as form data
-        data = {
-            "requests": json.dumps(requests_payload)
-        }
-
-        handler = requests_payload.get("0", {}).get("handler", "unknown")
-        method = requests_payload.get("0", {}).get("method", "unknown")
-        _LOGGER.debug("AJAX request: POST %s [handler=%s, method=%s]", url, handler, method)
-        _LOGGER.debug("AJAX request payload: %s", requests_payload)
-        _LOGGER.debug("PHPSESSID present: %s", bool(self._phpsessid))
-
-        try:
-            async with self.session.post(url, headers=headers, cookies=cookies, data=data) as response:
-                _LOGGER.debug(
-                    "EVC-net API: %s.%s -> %s",
-                    handler.split("\\")[-1] if "\\" in handler else handler,
-                    method,
-                    response.status,
-                )
-                _LOGGER.debug("AJAX response: POST %s -> %s", url, response.status)
-                _LOGGER.debug("Response content-type: %s", response.headers.get("Content-Type", "unknown"))
-                # Check content type before trying to parse JSON
-                content_type = response.headers.get('Content-Type', '')
-
-                if response.status == 200:
-                    if 'application/json' in content_type or 'text/html' in content_type:
-                        # Try to parse as JSON first
-                        try:
-                            response_text = await response.text()
-
-                            # Check if response looks like JSON
-                            if response_text.strip().startswith('[') or response_text.strip().startswith('{'):
-                                return json.loads(response_text)
-                            else:
-                                # It's HTML, session expired
-                                _LOGGER.warning(
-                                    "Received HTML instead of JSON (status %s, content-type: %s), "
-                                    "session likely expired. Re-authenticating... (retry %d)",
-                                    response.status,
-                                    content_type,
-                                    _retry_count
-                                )
-                                _LOGGER.debug("HTML response (first 300 chars): %s", response_text[:300])
-                                self._is_authenticated = False
-
-                                # Try to re-authenticate
-                                if await self.authenticate():
-                                    # Retry the request once with incremented counter
-                                    return await self._make_ajax_request(requests_payload, _retry_count + 1)
-
-                                raise Exception("Re-authentication failed or still getting HTML response")
-                        except json.JSONDecodeError as err:
-                            _LOGGER.error("Failed to decode JSON response: %s", err)
-                            _LOGGER.debug("Response text: %s", response_text[:500])
-                            raise
-                    else:
-                        raise Exception(f"Unexpected content type: {content_type}")
-
-                elif response.status in [401, 302]:
-                    # Session expired, re-authenticate
-                    _LOGGER.info(
-                        "Session expired (status %s), re-authenticating (retry %d)",
-                        response.status,
-                        _retry_count,
-                    )
-                    self._is_authenticated = False
-                    if await self.authenticate():
-                        # Retry the request with incremented counter
-                        return await self._make_ajax_request(requests_payload, _retry_count + 1)
-                    raise Exception("Re-authentication failed")
+            data = body.get("data") or {}
+            fatal = []
+            for error in errors:
+                path = error.get("path") or []
+                field = path[0] if path else None
+                if field in optional_fields:
+                    _LOGGER.debug("Ignoring error on optional field %s: %s", field, error.get("message"))
+                    data[field] = None
                 else:
-                    response_text = await response.text()
-                    _LOGGER.error(
-                        "Request failed with status %s, response: %s",
-                        response.status,
-                        response_text[:200]
-                    )
-                    raise Exception(f"Request failed with status {response.status}")
-        except aiohttp.ClientTimeout as err:
-            _LOGGER.error("Request timeout: %s", err)
-            raise Exception("Request timeout") from err
-        except aiohttp.ClientConnectorError as err:
-            _LOGGER.error("Connection error: %s", err)
-            raise Exception("Cannot connect to EVC-net") from err
-        except aiohttp.ClientError as err:
-            _LOGGER.error("HTTP client error: %s", err)
-            raise Exception(f"HTTP error: {err}") from err
+                    fatal.append(error.get("message", "unknown error"))
+            if fatal:
+                raise EvcNetError("; ".join(fatal))
+            return data
 
-    async def get_charge_spots(self) -> dict[str, Any]:
-        """Get list of charging spots."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\DashboardAsyncService",
-                "method": "networkOverview",
-                "params": {
-                    "mode": "id"
-                }
-            }
-        }
+        raise EvcNetAuthError("Token rejected after re-authentication")
 
-        return await self._make_ajax_request(requests_payload)
+    async def poll(self, transactions: int = 25) -> dict[str, Any]:
+        """Fetch stations, the active transaction and the most recent transactions."""
+        return await self.query(
+            POLL_QUERY,
+            {"start": 0, "end": transactions},
+            optional_fields=("lmsActiveTransaction", "lmsTransactions"),
+        )
 
-    async def get_spot_total_energy_usage(self, recharge_spot_id: str) -> dict[str, Any]:
-        """Get total energy usage of a specific charging spot."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\DashboardAsyncService",
-                "method":"totalUsage",
-                "params":{
-                    "mode":"rechargeSpot",
-                    "rechargeSpotIds": [recharge_spot_id],
-                    "maxCache":3600
-                }
-            }
-        }
+    async def get_charge_stations(self) -> list[dict[str, Any]]:
+        """Return the charge stations owned by the logged-in customer."""
+        data = await self.query(f"query Stations {{ getCustomerChargeStations {{ {STATION_FIELDS} }} }}")
+        return data.get("getCustomerChargeStations") or []
 
-        return await self._make_ajax_request(requests_payload)
+    async def get_active_transaction(self) -> dict[str, Any] | None:
+        """Return the active transaction for the logged-in user, if any."""
+        data = await self.query(f"query Active {{ lmsActiveTransaction {{ {TRANSACTION_FIELDS} }} }}")
+        return data.get("lmsActiveTransaction")
 
-    async def get_spot_overview(self, recharge_spot_id: str) -> dict[str, Any]:
-        """Get detailed overview of a charging spot."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "overview",
-                "params": {
-                    "rechargeSpotId": recharge_spot_id
-                }
-            }
-        }
+    async def get_transactions(self, start: int = 0, end: int = 25) -> tuple[list[dict[str, Any]], bool]:
+        """Return a page of transactions (newest first) and whether more are available."""
+        data = await self.query(TRANSACTIONS_QUERY, {"start": start, "end": end})
+        result = data.get("lmsTransactions") or {}
+        return result.get("items") or [], bool(result.get("hasMore"))
 
-        return await self._make_ajax_request(requests_payload)
+    async def get_all_transactions(self, page_size: int = 100, max_pages: int = 50) -> list[dict[str, Any]]:
+        """Return all transactions by walking through the pages."""
+        items: list[dict[str, Any]] = []
+        for page in range(max_pages):
+            start = page * page_size
+            page_items, has_more = await self.get_transactions(start, start + page_size)
+            items.extend(page_items)
+            if not has_more or not page_items:
+                break
+        return items
 
-    async def start_charging(self, recharge_spot_id: str, customer_id: str, card_id: str, channel: str) -> dict[str, Any]:
-        """Start a charging session."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "action",
-                "params": {
-                    "action": "StartTransaction",
-                    "rechargeSpotId": recharge_spot_id,
-                    "clickedButtonId": 0,
-                    "channel": channel,
-                    "customer": customer_id,
-                    "card": card_id
-                }
-            }
-        }
+    async def get_cards(self) -> list[dict[str, Any]]:
+        """Return the charge cards of the logged-in customer."""
+        data = await self.query(CARDS_QUERY)
+        return (data.get("getCards") or {}).get("items") or []
 
-        return await self._make_ajax_request(requests_payload)
+    async def _mutate(self, name: str, args: dict[str, Any]) -> bool:
+        """Run a station mutation that returns a Boolean."""
+        decl = ", ".join(f"${k}: {'String' if k == 'card' else 'ID!'}" for k in args)
+        call = ", ".join(f"{k}: ${k}" for k in args)
+        data = await self.query(f"mutation Action({decl}) {{ {name}({call}) }}", args)
+        result = data.get(name)
+        _LOGGER.debug("%s(%s) -> %s", name, args, result)
+        if result is False:
+            raise EvcNetError(f"{name} was rejected by the charge station")
+        return bool(result)
 
-    async def stop_charging(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
-        """Stop a charging session."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "action",
-                "params": {
-                    "action": "StopTransaction",
-                    "rechargeSpotId": recharge_spot_id,
-                    "clickedButtonId": 0,
-                    "channel": channel
-                }
-            }
-        }
+    async def start_charging(self, charge_station_id: str, channel_id: str, card: str | None) -> bool:
+        """Start a transaction on a channel (channel_id is the channel's internal id)."""
+        return await self._mutate(
+            "startTransaction",
+            {"chargeStationId": charge_station_id, "channelId": channel_id, "card": card},
+        )
 
-        return await self._make_ajax_request(requests_payload)
+    async def stop_charging(self, charge_station_id: str, channel_id: str) -> bool:
+        """Stop the transaction on a channel."""
+        return await self._mutate("stopTransaction", {"chargeStationId": charge_station_id, "channelId": channel_id})
 
-    async def get_status(self, recharge_spot_id: str) -> dict[str, Any]:
-        """Request fresh status from the charging spot (GetStatus action)."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "action",
-                "params": {
-                    "action": "GetStatus",
-                    "rechargeSpotId": recharge_spot_id,
-                    "clickedButtonId": 1,
-                },
-            }
-        }
+    async def soft_reset(self, charge_station_id: str) -> bool:
+        """Soft reset (non-disruptive restart) a charge station."""
+        return await self._mutate("softReset", {"chargeStationId": charge_station_id})
 
-        return await self._make_ajax_request(requests_payload)
+    async def hard_reset(self, charge_station_id: str) -> bool:
+        """Hard reset (full reboot) a charge station."""
+        return await self._mutate("hardReset", {"chargeStationId": charge_station_id})
 
-    async def soft_reset(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
-        """Perform a soft reset on a charging station."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "action",
-                "params": {
-                    "action": "SoftReset",
-                    "rechargeSpotId": recharge_spot_id,
-                    "clickedButtonId": 0,
-                    "channel": channel
-                }
-            }
-        }
-
-        return await self._make_ajax_request(requests_payload)
-
-    async def hard_reset(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
-        """Perform a hard reset on a charging station."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "action",
-                "params": {
-                    "action": "HardReset",
-                    "rechargeSpotId": recharge_spot_id,
-                    "clickedButtonId": 0,
-                    "channel": channel
-                }
-            }
-        }
-
-        return await self._make_ajax_request(requests_payload)
-
-    async def unlock_connector(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
-        """Unlock the connector on a charging station."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "action",
-                "params": {
-                    "action": "UnlockConnector",
-                    "rechargeSpotId": recharge_spot_id,
-                    "clickedButtonId": 0,
-                    "channel": channel
-                }
-            }
-        }
-
-        return await self._make_ajax_request(requests_payload)
-
-    async def block(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
-        """Block a charging station."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "action",
-                "params": {
-                    "action": "Block",
-                    "rechargeSpotId": recharge_spot_id,
-                    "clickedButtonId": 0,
-                    "channel": channel
-                }
-            }
-        }
-
-        return await self._make_ajax_request(requests_payload)
-
-    async def unblock(self, recharge_spot_id: str, channel: str) -> dict[str, Any]:
-        """Unblock a charging station."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "action",
-                "params": {
-                    "action": "Unblock",
-                    "rechargeSpotId": recharge_spot_id,
-                    "clickedButtonId": 0,
-                    "channel": channel
-                }
-            }
-        }
-
-        return await self._make_ajax_request(requests_payload)
-
-    async def get_spot_log(
-        self,
-        recharge_spot_id: str,
-        channel: str,
-        detailed: bool = False,
-        log_id: str | None = None,
-        extend: bool = False,
-    ) -> dict[str, Any]:
-        """Retrieve the log entries for a charging station."""
-        requests_payload = {
-            "0": {
-                "handler": "\\LMS\\EV\\AsyncServices\\RechargeSpotsAsyncService",
-                "method": "log",
-                "params": {
-                    "rechargeSpotId": recharge_spot_id,
-                    "channel": channel,
-                    "detailed": detailed,
-                    "id": log_id,
-                    "extend": extend,
-                },
-            }
-        }
-
-        return await self._make_ajax_request(requests_payload)
+    async def unlock_connector(self, charge_station_id: str, channel_id: str) -> bool:
+        """Unlock the connector of a channel."""
+        return await self._mutate("unlockConnector", {"chargeStationId": charge_station_id, "channelId": channel_id})

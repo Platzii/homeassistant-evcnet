@@ -3,43 +3,30 @@
 DOMAIN = "evcnet"
 
 # Configuration
-CONF_BASE_URL = "base_url"
 CONF_CARD_ID = "card_id"
-CONF_CUSTOMER_ID = "customer_id"
 CONF_MAX_CHANNELS = "max_channels"
+# Only used by config entries created before 2.0.0 (removed during migration)
+CONF_BASE_URL = "base_url"
+CONF_CUSTOMER_ID = "customer_id"
 
 # Default values
-DEFAULT_BASE_URL = "https://50five-sbelux.evc-net.com"
 DEFAULT_SCAN_INTERVAL = 30  # seconds
 DEFAULT_MAX_CHANNELS = 1
 ACTION_SETTLE_DELAY_SEC = 3 # Seconds to wait after start/stop/action before refreshing coordinator data
 
-# API endpoints
-LOGIN_ENDPOINT = "/Login/Login"
-AJAX_ENDPOINT = "/api/ajax"
+# Number of recent transactions fetched on every poll (used for the log sensors)
+RECENT_TRANSACTIONS = 25
+# Interval at which the full transaction history is re-read to recompute total energy
+FULL_HISTORY_INTERVAL_SEC = 6 * 3600
+# Retry delay when loading the transaction history failed
+HISTORY_RETRY_SEC = 300
+
+# Transaction status reported by the API while a session is running
+TRANSACTION_STATUS_ACTIVE = "charging"
+# Channel status reported while a transaction is ongoing (also when the car is full)
+CHANNEL_STATUS_TRANSACTION = "Transaction"
 
 # Attribute names
 ATTR_RECHARGE_SPOT_ID = "recharge_spot_id"
 ATTR_CHANNEL = "channel"
-ATTR_STATUS = "status"
-ATTR_POWER = "power"
-ATTR_ENERGY = "energy"
-ATTR_CUSTOMER_ID = "customer_id"
 ATTR_CARD_ID = "card_id"
-
-# Status flags for bitwise operations
-# Status1 flags (upper 32 bits)
-CHARGESPOT_STATUS1_FLAGS = {
-    "NO_COMMUNICATION": 0x30000000, # No communication with charging station
-    "FAULT": 0x4000002F,            # Various fault conditions
-}
-
-# Status2 flags (lower 32 bits)
-CHARGESPOT_STATUS2_FLAGS = {
-    "BLOCKED": 0x20000,             # Charging spot is blocked
-    "OCCUPIED": 0x10000,            # Charging spot is occupied
-    "FULL": 0x40000,                # Charging is complete/full
-    "RESERVED": 0x400,              # Charging spot is reserved
-    "FAULT": 0xD8407940,            # Various fault conditions
-}
-# Note: AVAILABLE state is represented by the absence of all status2 flags

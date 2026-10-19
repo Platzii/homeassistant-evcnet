@@ -2,51 +2,55 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to EVC-net",
-        "description": "Enter your EVC-net account credentials",
+        "title": "Connect to 50five",
+        "description": "Enter the credentials of your 50five account (the same as in the 50five app).",
         "data": {
-          "base_url": "Base URL",
           "username": "Email",
           "password": "Password"
         }
       },
       "card_config": {
         "title": "Card Configuration (Optional)",
-        "description": "Provide your RFID card ID to enable remote start/stop of charging sessions. You can leave this blank and it will be auto-detected from your next charging session.",
+        "description": "Card used to start charging sessions from Home Assistant, e.g. NL-TNM-C12345-6. Leave blank to use the card linked to your charging station.",
         "data": {
-          "card_id": "RFID Card ID",
-          "customer_id": "Customer ID (optional)"
+          "card_id": "Charge card ID"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "The password for {username} is no longer accepted. Enter your current password.",
+        "data": {
+          "password": "Password"
         }
       },
       "reconfigure": {
         "title": "Reconfigure EVC-net",
-        "description": "Update your EVC-net connection credentials. Leave password blank to keep current password.",
+        "description": "Update your 50five account credentials. Leave password blank to keep the current password.",
         "data": {
-          "base_url": "Base URL",
           "username": "Email",
           "password": "Password (leave blank to keep current)"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid username or password",
-      "cannot_connect": "Cannot connect to EVC-net",
-      "invalid_url": "Invalid URL format. Please enter a valid URL starting with http:// or https://",
+      "invalid_auth": "Invalid email or password",
+      "cannot_connect": "Cannot connect to the 50five API",
       "unknown": "Unexpected error occurred"
     },
     "abort": {
       "already_configured": "This account is already configured",
-      "reconfigure_successful": "Configuration updated successfully"
+      "reauth_successful": "Re-authentication was successful",
+      "reconfigure_successful": "Configuration updated successfully",
+      "unknown": "Unexpected error occurred"
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "EVC-net Options",
-        "description": "Update your RFID card ID and customer ID. These are used to start charging sessions remotely. Leave blank to use auto-detected values.",
+        "description": "Charge card used to start sessions (leave blank to use the card linked to your charging station), and the number of channels to create per-channel entities for.",
         "data": {
-          "card_id": "RFID Card ID",
-          "customer_id": "Customer ID (optional)",
+          "card_id": "Charge card ID",
           "max_channels": "Maximum channels"
         }
       }

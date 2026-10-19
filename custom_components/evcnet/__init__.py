@@ -1,5 +1,4 @@
 """The EVC-net integration."""
-import asyncio
 import logging
 from typing import Any
 
@@ -11,9 +10,10 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .api import EvcNetApiClient
+from .button import async_run_action
 from .const import (
-    ACTION_SETTLE_DELAY_SEC,
     CONF_BASE_URL,
+    CONF_CUSTOMER_ID,
     CONF_MAX_CHANNELS,
     DEFAULT_MAX_CHANNELS,
     DOMAIN,
@@ -23,6 +23,9 @@ from .coordinator import EvcNetCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BUTTON]
+
+# Unique ID suffixes of entities that were removed in 2.0.0
+OBSOLETE_UNIQUE_ID_SUFFIXES = ("_block", "_unblock")
 
 # This integration can only be set up from config entries, not from YAML
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -117,7 +120,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 )
 
     async def async_handle_charging_action(call: ServiceCall, action_name: str) -> None:
-        """Handle charging station actions (refresh_status, soft_reset, hard_reset, unlock_connector, block, unblock)."""
+        """Handle charging station actions (refresh_status, soft_reset, hard_reset, unlock_connector)."""
         entity_ids = await service.async_extract_entity_ids(call)
         if not entity_ids:
             _LOGGER.error(
@@ -138,40 +141,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     _entry.unique_id,
                 )
                 continue
-            spot_id = getattr(switch_entity, "_spot_id", None)
-            if spot_id is None:
-                _LOGGER.error("Switch entity missing spot_id: %s", _entry.unique_id)
-                continue
-            spot_data = coordinator.data.get(spot_id, {})
-            spot_info = spot_data.get("info", {})
-            channel_override = getattr(switch_entity, "_channel_override", None)
-            channel = str(channel_override or spot_info.get("CHANNEL", "1"))
-            try:
-                _LOGGER.info(
-                    "Performing %s on spot %s%s",
-                    action_name,
-                    spot_id,
-                    f", channel {channel}" if action_name != "refresh_status" else "",
-                )
-                if action_name == "refresh_status":
-                    await coordinator.client.get_status(spot_id)
-                elif action_name == "soft_reset":
-                    await coordinator.client.soft_reset(spot_id, channel)
-                elif action_name == "hard_reset":
-                    await coordinator.client.hard_reset(spot_id, channel)
-                elif action_name == "unlock_connector":
-                    await coordinator.client.unlock_connector(spot_id, channel)
-                elif action_name == "block":
-                    await coordinator.client.block(spot_id, channel)
-                elif action_name == "unblock":
-                    await coordinator.client.unblock(spot_id, channel)
-                await asyncio.sleep(ACTION_SETTLE_DELAY_SEC)
-                await coordinator.async_request_refresh()
-            except Exception as err:
-                _LOGGER.error(
-                    "Failed to perform %s: %s", action_name, err, exc_info=True
-                )
-                await coordinator.async_request_refresh()
+            await async_run_action(
+                coordinator, action_name, switch_entity._spot_id, switch_entity.channel_id
+            )
 
     def _charging_action_handler(action_name: str):
         """Return an async service handler that awaits async_handle_charging_action."""
@@ -216,25 +188,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         _charging_action_handler("unlock_connector"),
     )
 
-    hass.services.async_register(
-        DOMAIN,
-        "block",
-        _charging_action_handler("block"),
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "unblock",
-        _charging_action_handler("unblock"),
-    )
-
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up EVC-net from a config entry."""
     # Validate required configuration
-    required_keys = [CONF_BASE_URL, CONF_USERNAME, CONF_PASSWORD]
+    required_keys = [CONF_USERNAME, CONF_PASSWORD]
     missing_keys = [key for key in required_keys if key not in entry.data]
 
     if missing_keys:
@@ -249,7 +209,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = async_get_clientsession(hass)
 
     client = EvcNetApiClient(
-        entry.data[CONF_BASE_URL],
         entry.data[CONF_USERNAME],
         entry.data[CONF_PASSWORD],
         session,
@@ -257,18 +216,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Read max channels from options; default to DEFAULT_MAX_CHANNELS
     max_channels = int(entry.options.get(CONF_MAX_CHANNELS, DEFAULT_MAX_CHANNELS))
-    coordinator = EvcNetCoordinator(hass, client, max_channels=max_channels)
+    coordinator = EvcNetCoordinator(hass, entry, client, max_channels=max_channels)
 
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
+    _remove_obsolete_entities(hass, entry)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
+    return True
+
+
+def _remove_obsolete_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove entities of features that no longer exist (block/unblock buttons, removed in 2.0.0)."""
+    entity_registry = er.async_get(hass)
+    for entity_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if entity_entry.unique_id.endswith(OBSOLETE_UNIQUE_ID_SUFFIXES):
+            _LOGGER.info("Removing obsolete entity %s", entity_entry.entity_id)
+            entity_registry.async_remove(entity_entry.entity_id)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate old config entries to the current version."""
+    if entry.version == 1:
+        # 2.0.0 moved to the 50five GraphQL API: the portal URL and customer ID are no longer used
+        data = {k: v for k, v in entry.data.items() if k not in (CONF_BASE_URL, CONF_CUSTOMER_ID)}
+        options = {k: v for k, v in entry.options.items() if k != CONF_CUSTOMER_ID}
+        hass.config_entries.async_update_entry(entry, data=data, options=options, version=2)
+        _LOGGER.info("Migrated EVC-net config entry to version 2")
     return True
 
 

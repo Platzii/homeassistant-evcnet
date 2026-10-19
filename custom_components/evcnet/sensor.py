@@ -1,6 +1,7 @@
 """Sensor platform for EVC-net."""
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -11,276 +12,117 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTime, PERCENTAGE
+from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import EvcNetCoordinator
+from .entity import EvcNetEntity
 
 _LOGGER = logging.getLogger(__name__)
 
+# Human-readable names for transaction statuses reported by the API
+TRANSACTION_STATUS_NAMES = {
+    "charging": "Charging",
+    "committed": "Completed",
+}
 
-@dataclass
+
+@dataclass(frozen=True, kw_only=True)
 class EvcNetSensorEntityDescription(SensorEntityDescription):
-    """Describes EVC-net sensor entity."""
+    """Describes EVC-net sensor entity.
 
-    value_fn: Callable[[dict[str, Any]], Any] | None = None
+    value_fn receives (spot_data, channel_data).
+    """
 
-
-def get_nested_value(data: dict, *keys: str, default: Any = None) -> Any:
-    """Safely get a nested value from a dictionary."""
-    current = data
-    for key in keys:
-        if isinstance(current, dict):
-            current = current.get(key, default)
-        elif isinstance(current, list) and len(current) > 0:
-            # Handle array responses like {"0": [[{...}]]}
-            # Check if key is numeric (as string or int)
-            try:
-                idx = int(key)
-                if idx < len(current):
-                    current = current[idx]
-                else:
-                    return default
-            except (ValueError, TypeError):
-                # If it's not a numeric key, try to access the first element
-                current = current[0] if len(current) > 0 else default
-                if isinstance(current, dict):
-                    current = current.get(key, default)
-        else:
-            return default
-    return current if current is not None else default
+    value_fn: Callable[[dict[str, Any], dict[str, Any]], Any]
 
 
-def extract_log_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalize log data to a flat list of entries."""
-    log_data = data.get("log", [])
-
-    # Some responses use a dict with numeric keys
-    if isinstance(log_data, dict):
-        log_data = log_data.get("0", [])
-
-    if isinstance(log_data, list):
-        # The API typically returns [[{...}, {...}]]
-        if log_data and isinstance(log_data[0], list):
-            log_entries = log_data[0]
-        else:
-            log_entries = log_data
-
-        # Sanitize whitespace-heavy HTML fragments to single-line strings for editors
-        sanitized: list[dict[str, Any]] = []
-        for entry in log_entries:
-            if not isinstance(entry, dict):
-                continue
-
-            new_entry = dict(entry)
-
-            icon = new_entry.get("CARD_TYPE_ICON")
-            if isinstance(icon, str):
-                # Collapse newlines/tabs/spaces to a single space to keep JSON inline
-                new_entry["CARD_TYPE_ICON"] = " ".join(icon.split())
-
-            event_data = new_entry.get("EVENT_DATA")
-            if isinstance(event_data, str):
-                # Also normalize event data string spacing
-                new_entry["EVENT_DATA"] = " ".join(event_data.split())
-
-            sanitized.append(new_entry)
-
-        return sanitized
-
-    return []
+def parse_datetime(value: str | None) -> datetime | None:
+    """Parse an ISO date string from the API."""
+    return dt_util.parse_datetime(value) if value else None
 
 
-def latest_log_entry(data: dict[str, Any]) -> dict[str, Any] | None:
-    """Return the most recent log entry if available."""
-    entries = extract_log_entries(data)
-    if entries:
-        return entries[0]
-    return None
+def format_local(value: str | None) -> str:
+    """Format an ISO date string from the API as local 'YYYY-MM-DD HH:MM'."""
+    parsed = parse_datetime(value)
+    return dt_util.as_local(parsed).strftime("%Y-%m-%d %H:%M") if parsed else ""
+
+
+def format_duration(seconds: Any) -> str:
+    """Format seconds as H:MM."""
+    if not isinstance(seconds, (int, float)):
+        return ""
+    minutes = int(seconds) // 60
+    return f"{minutes // 60}:{minutes % 60:02d}"
+
+
+def wh_to_kwh(value: Any) -> float:
+    """Convert a Wh value from the API to kWh."""
+    return round(float(value or 0) / 1000, 3)
+
+
+def transaction_status(tx: dict[str, Any]) -> str | None:
+    """Return a human-readable status of a transaction."""
+    status = tx.get("transactionStatus")
+    if not status:
+        return None
+    return TRANSACTION_STATUS_NAMES.get(status.lower(), status.capitalize())
+
+
+def session_hours(tx: dict[str, Any] | None) -> float:
+    """Return the duration (charging + idle) of a transaction in hours."""
+    if not tx:
+        return 0.0
+    seconds = (tx.get("durationCharging") or 0) + (tx.get("durationIdle") or 0)
+    return round(seconds / 3600, 2)
+
+
+def latest_log_entry(channel_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the most recent transaction of a channel."""
+    log = channel_data.get("log") or []
+    return log[0] if log else None
 
 
 def summarize_log_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return simplified rows with parsed icon metadata for frontend use."""
-    rows: list[dict[str, Any]] = []
-    for entry in entries:
-        icon_title = parse_card_icon_title(entry.get("CARD_TYPE_ICON"))
-        mdi_icon = map_icon_title_to_mdi(icon_title)
-        info_text = entry.get("EVENT_DATA") or ""
+    """Return simplified rows for frontend use."""
+    return [
+        {
+            "start": entry.get("startDate"),
+            "end": entry.get("endDate"),
+            "status": transaction_status(entry),
+            "energy_kwh": wh_to_kwh(entry.get("energyDelivered")),
+            "charging_time": format_duration(entry.get("durationCharging")),
+            "idle_time": format_duration(entry.get("durationIdle")),
+            "card_id": entry.get("loyaltyCardIdentifier"),
+            "amount": entry.get("totalAmount"),
+            "currency": entry.get("currency"),
+        }
+        for entry in entries
+    ]
+
+
+def format_log_as_markdown(entries: list[dict[str, Any]], max_rows: int = 50) -> str:
+    """Create a plain Markdown table of recent sessions."""
+    rows = [
+        "| Start | End | Status | Energy (kWh) | Charging | Idle |\n|---|---|---|---:|---|---|"
+    ]
+    for entry in entries[:max_rows]:
         rows.append(
-            {
-                "date": entry.get("LOG_DATE"),
-                "notification": entry.get("NOTIFICATION"),
-                "power_kw": entry.get("MOM_POWER_KW"),
-                "energy_kwh": entry.get("TRANS_ENERGY_DELIVERED_KWH"),
-                "transaction_time": entry.get("TRANSACTION_TIME_H_M"),
-                "card_id": entry.get("CARDID"),
-                "client": entry.get("CUSTOMER_NAME"),
-                "details": info_text,
-                "icon_title": icon_title,
-                "mdi_icon": mdi_icon,
-            }
+            f"| {format_local(entry.get('startDate'))} "
+            f"| {format_local(entry.get('endDate'))} "
+            f"| {transaction_status(entry) or ''} "
+            f"| {wh_to_kwh(entry.get('energyDelivered')):.2f} "
+            f"| {format_duration(entry.get('durationCharging'))} "
+            f"| {format_duration(entry.get('durationIdle'))} |"
         )
-    return rows
+    return "\n".join(rows)
 
 
-def parse_card_icon_title(icon_html: str | None) -> str | None:
-    """Extract the title attribute (e.g., 'RFID') from the icon HTML."""
-    if not icon_html or not isinstance(icon_html, str):
-        return None
-    # Simple extraction without regex to keep dependencies minimal
-    icon_html = icon_html.replace('\"', '"')
-    marker = "title='"
-    alt_marker = 'title="'
-    if marker in icon_html:
-        start = icon_html.find(marker) + len(marker)
-        end = icon_html.find("'", start)
-        return icon_html[start:end] if end > start else None
-    if alt_marker in icon_html:
-        start = icon_html.find(alt_marker) + len(alt_marker)
-        end = icon_html.find('"', start)
-        return icon_html[start:end] if end > start else None
-    return None
-
-
-def map_icon_title_to_mdi(title: str | None) -> str | None:
-    """Map known icon titles to MDI icons usable in HA UI."""
-    if not title:
-        return None
-    title_upper = title.strip().upper()
-    mapping = {
-        "RFID": "mdi:nfc",  # Most common value seen in CARD_TYPE_ICON title
-    }
-    return mapping.get(title_upper)
-
-
-def parse_locale_number(value: Any, default: float = 0.0) -> float:
-    """Parse a number from a string, handling locale-specific formatting.
-
-    Handles both comma and point as decimal separators (e.g., '1,888' or '1.888').
-    Assumes that '.' or ',' is always a decimal separator, not a thousands separator.
-    """
-    if value is None:
-        return default
-
-    # If already a number, return it
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    # If not a string, try to convert
-    if not isinstance(value, str):
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return default
-
-    # Remove whitespace
-    value = value.strip()
-    if not value:
-        return default
-
-    try:
-        # Try direct conversion first (handles standard format with point as decimal)
-        return float(value)
-    except ValueError:
-        pass
-
-    # Handle locale-specific formatting
-    # Both comma and point are treated as decimal separators
-    if ',' in value:
-        # Comma is decimal separator (e.g., '1,888' -> 1.888)
-        value = value.replace(',', '.')
-
-    try:
-        return float(value)
-    except ValueError as err:
-        _LOGGER.warning("Error parsing number '%s': %s", value, err)
-        return default
-
-
-def convert_time_to_decimal_hours(time_str: str) -> float:
-    """Convert HH:MM time format to decimal hours (e.g., 2:30 -> 2.5)."""
-    if not time_str or not isinstance(time_str, str):
-        return 0.0
-
-    try:
-        # Split by colon and convert to integers
-        parts = time_str.split(':')
-        if len(parts) == 2:
-            hours = int(parts[0])
-            minutes = int(parts[1])
-            # Convert to decimal hours: hours + (minutes / 60)
-            return hours + (minutes / 60.0)
-        else:
-            _LOGGER.warning("Invalid time format: %s", time_str)
-            return 0.0
-    except (ValueError, TypeError) as err:
-        _LOGGER.warning("Error converting time '%s' to decimal hours: %s", time_str, err)
-        return 0.0
-
-
-def convert_energy_to_kwh(value: float, unit: str) -> float:
-    """Convert energy value from various units to kWh.
-
-    Supports: Wh, kWh, MWh, GWh (case-insensitive).
-    Returns the value in kWh.
-    """
-    unit_upper = unit.strip().upper()
-
-    # Conversion factors to kWh
-    conversion_factors = {
-        "WH": 0.001,      # 1 Wh = 0.001 kWh
-        "KWH": 1.0,       # 1 kWh = 1 kWh
-        "MWH": 1000.0,    # 1 MWh = 1000 kWh
-        "GWH": 1000000.0, # 1 GWh = 1000000 kWh
-    }
-
-    factor = conversion_factors.get(unit_upper, 1.0)
-    if unit_upper not in conversion_factors:
-        _LOGGER.warning("Unknown energy unit '%s', assuming kWh", unit)
-
-    try:
-        return float(value) * factor
-    except (ValueError, TypeError) as err:
-        _LOGGER.warning("Error converting energy value '%s' with unit '%s': %s", value, unit, err)
-        return 0.0
-
-
-def _get_channel_status_info(spot_data: dict[str, Any], channel: int) -> dict[str, Any] | None:
-    """Return the status dict for the given channel (1-based) from spot_data, or None.
-
-    status[0] is the list of channels (index 0 = channel 1, index 1 = channel 2).
-    """
-    status = spot_data.get("status", [])
-    if not (
-        isinstance(status, list)
-        and len(status) > 0
-        and isinstance(status[0], list)
-        and len(status[0]) > 0
-    ):
-        return None
-    channel_index = channel - 1
-    channels_list = status[0]
-    if channel_index < 0 or channel_index >= len(channels_list):
-        return None
-    return channels_list[channel_index]
-
-
-def get_total_energy_usage_kwh(data: dict) -> float:
-    """Extract total energy usage and convert to kWh, handling dynamic units."""
-    number = get_nested_value(data, "total_energy_usage", 0, "number", default=0)
-    unit = get_nested_value(data, "total_energy_usage", 0, "unit", default="kWh")
-
-    # Parse the number if it's a string
-    if isinstance(number, str):
-        number = parse_locale_number(number, default=0.0)
-    elif not isinstance(number, (int, float)):
-        number = 0.0
-
-    # Convert to kWh
-    return convert_energy_to_kwh(number, unit)
+def _channel(channel_data: dict[str, Any]) -> dict[str, Any]:
+    return channel_data.get("channel") or {}
 
 
 SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
@@ -288,17 +130,13 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         key="status",
         name="Status",
         icon="mdi:ev-station",
-        value_fn=lambda data: (
-            get_nested_value(data, "status", 0, 0, "NOTIFICATION", default="Unknown")
-        ),
+        value_fn=lambda spot, ch: _channel(ch).get("globalStatus"),
     ),
     EvcNetSensorEntityDescription(
         key="status_code",
         name="Status Code",
         icon="mdi:information",
-        value_fn=lambda data: (
-            get_nested_value(data, "status", 0, 0, "STATUS", default="Unknown")
-        ),
+        value_fn=lambda spot, ch: ", ".join(_channel(ch).get("statuses") or []) or None,
     ),
     EvcNetSensorEntityDescription(
         key="current_power",
@@ -307,9 +145,7 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.KILO_WATT,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:lightning-bolt",
-        value_fn=lambda data: (
-            get_nested_value(data, "status", 0, 0, "MOM_POWER_KW", default=0)
-        ),
+        value_fn=lambda spot, ch: ch.get("power_kw"),
     ),
     EvcNetSensorEntityDescription(
         key="energy_usage",
@@ -318,7 +154,7 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:flash",
-        value_fn=get_total_energy_usage_kwh,
+        value_fn=lambda spot, ch: spot.get("total_energy_kwh"),
     ),
     EvcNetSensorEntityDescription(
         key="session_energy",
@@ -327,9 +163,7 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:battery-charging",
-        value_fn=lambda data: (
-            get_nested_value(data, "status", 0, 0, "TRANS_ENERGY_DELIVERED_KWH", default=0)
-        ),
+        value_fn=lambda spot, ch: wh_to_kwh((ch.get("transaction") or {}).get("energyDelivered")),
     ),
     EvcNetSensorEntityDescription(
         key="session_time",
@@ -337,41 +171,32 @@ SENSOR_TYPES: tuple[EvcNetSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.HOURS,
         icon="mdi:timer",
-        value_fn=lambda data: convert_time_to_decimal_hours(
-            get_nested_value(data, "status", 0, 0, "TRANSACTION_TIME_H_M", default="")
-        ),
+        value_fn=lambda spot, ch: session_hours(ch.get("transaction")),
     ),
     EvcNetSensorEntityDescription(
         key="software_version",
         name="Software Version",
         icon="mdi:information",
-        value_fn=lambda data: (
-            get_nested_value(data, "info", "SOFTWARE_VERSION", default="Unknown")
-        ),
+        value_fn=lambda spot, ch: (spot.get("info") or {}).get("softwareVersion"),
     ),
     EvcNetSensorEntityDescription(
         key="last_log_notification",
         name="Last Log Notification",
         icon="mdi:history",
-        value_fn=lambda data: (
-            (entry := latest_log_entry(data)) and entry.get("NOTIFICATION")
-        ),
+        value_fn=lambda spot, ch: (entry := latest_log_entry(ch)) and transaction_status(entry),
     ),
     EvcNetSensorEntityDescription(
         key="last_log_time",
         name="Last Log Time",
+        device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:clock-outline",
-        value_fn=lambda data: (
-            (entry := latest_log_entry(data)) and entry.get("LOG_DATE")
-        ),
+        value_fn=lambda spot, ch: (entry := latest_log_entry(ch)) and parse_datetime(entry.get("startDate")),
     ),
     EvcNetSensorEntityDescription(
         key="log_summary",
         name="Log Summary",
         icon="mdi:table",
-        value_fn=lambda data: (
-            len(extract_log_entries(data))
-        ),
+        value_fn=lambda spot, ch: len(ch.get("log") or []),
     ),
 )
 
@@ -386,33 +211,23 @@ async def async_setup_entry(
 
     entities = []
     for spot_id in coordinator.data:
-        # Get detected number of channels for this spot
         detected_channels = coordinator.spot_channels.get(str(spot_id), 1)
-        # Use the larger of max_channels setting and detected channels
-        effective_max = max(getattr(coordinator, "max_channels", 1), detected_channels)
+        effective_max = max(coordinator.max_channels, detected_channels)
 
         # If only one channel, use legacy sensors (original naming)
         if effective_max == 1:
-            for description in SENSOR_TYPES:
-                entities.append(EvcNetSensor(coordinator, description, spot_id))
+            entities.extend(EvcNetSensor(coordinator, description, spot_id) for description in SENSOR_TYPES)
         else:
-            # Multiple channels: create channel-specific sensors for ALL channels (1..effective_max)
             for ch in range(1, effective_max + 1):
-                for description in SENSOR_TYPES:
-                    entities.append(
-                        EvcNetChannelSensor(
-                            coordinator,
-                            description,
-                            spot_id,
-                            channel=ch,
-                        )
-                    )
+                entities.extend(
+                    EvcNetSensor(coordinator, description, spot_id, channel=ch) for description in SENSOR_TYPES
+                )
 
     async_add_entities(entities)
 
 
-class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
-    """Representation of a EVC-net sensor."""
+class EvcNetSensor(EvcNetEntity, SensorEntity):
+    """Representation of an EVC-net sensor (station-wide or for one channel)."""
 
     # Exclude large log attributes from Recorder (available at runtime for UI only)
     _unrecorded_attributes = frozenset({"log_entries", "log_rows", "log_markdown"})
@@ -424,272 +239,77 @@ class EvcNetSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
         coordinator: EvcNetCoordinator,
         description: EvcNetSensorEntityDescription,
         spot_id: str,
+        channel: int | None = None,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, spot_id, channel)
         self.entity_description = description
-        self._spot_id = spot_id
-        self._attr_unique_id = f"{spot_id}_{description.key}"
-
-        # Get spot info from coordinator data
-        spot_info = coordinator.data.get(spot_id, {}).get("info", {})
-
-        # Use NAME field, or fallback to spot ID
-        spot_name = spot_info.get("NAME")
-        if not spot_name or spot_name.strip() == "":
-            spot_name = f"Charge Spot {spot_id}"
-
-        self._attr_name = f"{spot_name} {description.name}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, spot_id)},
-            "name": spot_name,
-            "manufacturer": "Last Mile Solutions",
-            "model": "EVC-net Charging Station",
-            "sw_version": spot_info.get("SOFTWARE_VERSION"),
-        }
+        if channel:
+            self._attr_unique_id = f"{spot_id}_ch{channel}_{description.key}"
+            self._attr_name = f"{self._spot_name} Ch {channel} {description.name}"
+        else:
+            self._attr_unique_id = f"{spot_id}_{description.key}"
+            self._attr_name = f"{self._spot_name} {description.name}"
 
     @property
     def native_value(self) -> Any:
         """Return the state of the sensor."""
-        spot_data = self.coordinator.data.get(self._spot_id, {})
-
-        if self.entity_description.value_fn:
-            try:
-                value = self.entity_description.value_fn(spot_data)
-                # Filter out empty strings
-                if value == "":
-                    return None
-
-                # Parse locale-aware numbers for numeric sensors
-                # Sensors with device_class and state_class expect numeric values
-                if (self.entity_description.device_class is not None and
-                    self.entity_description.state_class is not None and
-                    isinstance(value, str)):
-                    # This is a numeric sensor with a string value, parse it
-                    parsed_value = parse_locale_number(value, default=0.0)
-                    return parsed_value
-
-                return value
-            except (KeyError, TypeError, AttributeError) as err:
-                _LOGGER.debug(
-                    "Error getting value for %s: %s", self.entity_description.key, err
-                )
-                return None
-
-        return None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional state attributes."""
-        spot_data = self.coordinator.data.get(self._spot_id, {})
-        spot_info = spot_data.get("info", {})
-
-        attributes = {
-            "spot_id": self._spot_id,
-            "address": spot_info.get("ADDRESS"),
-            "reference": spot_info.get("REFERENCE"),
-            "cost_center": spot_info.get("COST_CENTER_NUMBER"),
-            "network_type": spot_info.get("NETWORK_TYPE"),
-            "channels": spot_info.get("CHANNEL"),
-        }
-
-        # Add transaction info if available
-        if spot_info.get("TRANSACTION_TIME_H_M"):
-            attributes["transaction_time"] = spot_info.get("TRANSACTION_TIME_H_M")
-
-        if spot_info.get("CUSTOMERS_IDX"):
-            attributes["customer_id"] = spot_info.get("CUSTOMERS_IDX")
-
-        if spot_info.get("CUSTOMER_NAME"):
-            attributes["customer_name"] = spot_info.get("CUSTOMER_NAME")
-
-        # Log summary: only entity with full log data (for markdown card); not stored in Recorder
-        if self.entity_description.key == "log_summary":
-            log_entries = extract_log_entries(spot_data)
-            if log_entries:
-                attributes.update(
-                    {
-                        "log_entries": log_entries,
-                        "log_rows": summarize_log_rows(log_entries),
-                        "log_markdown": self._format_log_as_markdown(log_entries),
-                    }
-                )
-        # Last log sensors: only latest-entry fields (no full list/markdown)
-        elif self.entity_description.key.startswith("last_log"):
-            log_entries = extract_log_entries(spot_data)
-            if log_entries:
-                latest = log_entries[0]
-                attributes.update(
-                    {
-                        "log_date": latest.get("LOG_DATE"),
-                        "log_notification": latest.get("NOTIFICATION"),
-                        "log_event_type": latest.get("EVENT_TYPE"),
-                        "log_event_source": latest.get("EVENT_SOURCE"),
-                        "log_status": latest.get("STATUS"),
-                        "log_power_kw": latest.get("MOM_POWER_KW"),
-                        "log_energy_kwh": latest.get("TRANS_ENERGY_DELIVERED_KWH"),
-                        "log_transaction_time": latest.get("TRANSACTION_TIME_H_M"),
-                        "log_customer_name": latest.get("CUSTOMER_NAME"),
-                        "log_card_id": latest.get("CARDID"),
-                    }
-                )
-
-        # Remove None values
-        return {k: v for k, v in attributes.items() if v is not None}
-
-    def _format_log_as_markdown(self, entries: list[dict[str, Any]], max_rows: int = 50) -> str:
-        """Create a plain Markdown table similar to the portal view (no HTML tags)."""
-        rows: list[str] = []
-        header = "| Date | Notification | Power (kW) | Energy (kWh) | Time | Card | Client | Details |\n|---|---|---:|---:|---|---|---|---|"
-        rows.append(header)
-        for entry in entries[:max_rows]:
-            date = entry.get("LOG_DATE") or ""
-            note = entry.get("NOTIFICATION") or ""
-            power = entry.get("MOM_POWER_KW")
-            energy = entry.get("TRANS_ENERGY_DELIVERED_KWH")
-            time = entry.get("TRANSACTION_TIME_H_M") or ""
-            card_id = entry.get("CARDID") or ""
-            client = entry.get("CUSTOMER_NAME") or ""
-            details = entry.get("EVENT_DATA") or ""
-
-            power_str = f"{power:.3f}" if isinstance(power, (int, float)) else (str(power) if power is not None else "")
-            energy_str = f"{energy:.3f}" if isinstance(energy, (int, float)) else (str(energy) if energy is not None else "")
-
-            row = f"| {date} | {note} | {power_str} | {energy_str} | {time} | {card_id} | {client} | {details} |"
-            rows.append(row)
-
-        return "\n".join(rows)
-
-
-class EvcNetChannelSensor(CoordinatorEntity[EvcNetCoordinator], SensorEntity):
-    """Representation of a channel-specific EVC-net sensor."""
-
-    # Exclude large log attributes from Recorder (available at runtime for UI only)
-    _unrecorded_attributes = frozenset({"log_entries", "log_rows", "log_markdown"})
-
-    entity_description: EvcNetSensorEntityDescription
-
-    def __init__(
-        self,
-        coordinator: EvcNetCoordinator,
-        description: EvcNetSensorEntityDescription,
-        spot_id: str,
-        channel: int,
-    ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._spot_id = spot_id
-        self._channel = int(channel)
-        self._attr_unique_id = f"{spot_id}_ch{self._channel}_{description.key}"
-
-        spot_info = coordinator.data.get(spot_id, {}).get("info", {})
-        spot_name = spot_info.get("NAME") or f"Charge Spot {spot_id}"
-        self._attr_name = f"{spot_name} Ch {self._channel} {description.name}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, spot_id)},
-            "name": spot_name,
-            "manufacturer": "Last Mile Solutions",
-            "model": "EVC-net Charging Station",
-            "sw_version": spot_info.get("SOFTWARE_VERSION"),
-        }
-
-    @property
-    def native_value(self) -> Any:
-        """Return the state of the channel-specific sensor.
-
-        Live values (current_power, session_energy, session_time, status,
-        status_code) come from the API status for this channel. Log-only
-        sensors (last_log_*, log_summary) use channel log data.
-        """
-        spot_data = self.coordinator.data.get(self._spot_id, {})
-        ch_data = spot_data.get("channels", {}).get(self._channel, {})
-        status_info = _get_channel_status_info(spot_data, self._channel)
-        latest = None
         try:
-            latest = latest_log_entry(ch_data)
-        except Exception:
-            latest = None
-
-        key = self.entity_description.key
-
-        if key == "current_power":
-            if not status_info:
-                return 0
-            val = status_info.get("MOM_POWER_KW") or 0
-            return parse_locale_number(val, default=0.0) if isinstance(val, str) else val
-        if key == "session_energy":
-            if not status_info:
-                return 0
-            val = status_info.get("TRANS_ENERGY_DELIVERED_KWH") or 0
-            return parse_locale_number(val, default=0.0) if isinstance(val, str) else val
-        if key == "session_time":
-            if not status_info:
-                return 0.0
-            return convert_time_to_decimal_hours(
-                status_info.get("TRANSACTION_TIME_H_M") or ""
-            )
-        if key == "status":
-            return (status_info and status_info.get("NOTIFICATION")) or None
-        if key == "status_code":
-            return (status_info and status_info.get("STATUS")) or None
-        if key == "last_log_notification":
-            return (latest and latest.get("NOTIFICATION")) or None
-        if key == "last_log_time":
-            return (latest and latest.get("LOG_DATE")) or None
-        if key == "log_summary":
-            return len(extract_log_entries(ch_data))
-        if key == "energy_usage":
-            return get_total_energy_usage_kwh(spot_data)
-        if key == "software_version":
-            return get_nested_value(spot_data, "info", "SOFTWARE_VERSION", default="Unknown")
-
-        return None
+            value = self.entity_description.value_fn(self.spot_data, self.channel_data)
+        except (KeyError, TypeError, ValueError, AttributeError) as err:
+            _LOGGER.debug("Error getting value for %s: %s", self.entity_description.key, err)
+            return None
+        return None if value == "" else value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
-        spot_data = self.coordinator.data.get(self._spot_id, {})
-        spot_info = spot_data.get("info", {})
-        ch_data = spot_data.get("channels", {}).get(self._channel, {})
-
-        attributes = {
+        info = self.spot_info
+        channel = self.channel_data.get("channel") or {}
+        attributes: dict[str, Any] = {
             "spot_id": self._spot_id,
             "channel": self._channel,
-            "address": spot_info.get("ADDRESS"),
-            "reference": spot_info.get("REFERENCE"),
-            "cost_center": spot_info.get("COST_CENTER_NUMBER"),
-            "network_type": spot_info.get("NETWORK_TYPE"),
+            "address": info.get("gpsAddress") or None,
+            "city": info.get("gpsCity") or None,
+            "reference": info.get("reference") or None,
+            "evse_id": channel.get("evseId"),
+            "authorization_mode": (info.get("accessOptions") or {}).get("authorizationMode"),
         }
 
-        # Log summary: only entity with full log data (for markdown card); not stored in Recorder
-        if self.entity_description.key == "log_summary":
-            log_entries = extract_log_entries(ch_data)
-            if log_entries:
-                attributes.update(
-                    {
-                        "log_entries": log_entries,
-                        "log_rows": summarize_log_rows(log_entries),
-                        "log_markdown": self._format_log_as_markdown(log_entries),
-                    }
-                )
-        # Last log sensors: only latest-entry fields (no full list/markdown)
-        elif self.entity_description.key.startswith("last_log"):
-            log_entries = extract_log_entries(ch_data)
-            if log_entries:
-                latest = log_entries[0]
-                attributes.update(
-                    {
-                        "log_date": latest.get("LOG_DATE"),
-                        "log_notification": latest.get("NOTIFICATION"),
-                        "log_event_type": latest.get("EVENT_TYPE"),
-                        "log_event_source": latest.get("EVENT_SOURCE"),
-                        "log_status": latest.get("STATUS"),
-                        "log_power_kw": latest.get("MOM_POWER_KW"),
-                        "log_energy_kwh": latest.get("TRANS_ENERGY_DELIVERED_KWH"),
-                        "log_transaction_time": latest.get("TRANSACTION_TIME_H_M"),
-                        "log_customer_name": latest.get("CUSTOMER_NAME"),
-                        "log_card_id": latest.get("CARDID"),
-                    }
-                )
+        key = self.entity_description.key
+        log_entries = self.channel_data.get("log") or []
+        if key == "log_summary" and log_entries:
+            # Only entity with full log data (for markdown card); not stored in Recorder
+            attributes.update(
+                {
+                    "log_entries": log_entries,
+                    "log_rows": summarize_log_rows(log_entries),
+                    "log_markdown": format_log_as_markdown(log_entries),
+                }
+            )
+        elif key.startswith("last_log") and log_entries:
+            latest = log_entries[0]
+            attributes.update(
+                {
+                    "log_transaction_id": latest.get("transactionId"),
+                    "log_start": latest.get("startDate"),
+                    "log_end": latest.get("endDate"),
+                    "log_status": transaction_status(latest),
+                    "log_energy_kwh": wh_to_kwh(latest.get("energyDelivered")),
+                    "log_charging_time": format_duration(latest.get("durationCharging")),
+                    "log_idle_time": format_duration(latest.get("durationIdle")),
+                    "log_card_id": latest.get("loyaltyCardIdentifier"),
+                }
+            )
+        elif key == "status":
+            attributes.update(
+                {
+                    "statuses": channel.get("statuses"),
+                    "last_status_change": channel.get("lastStatusChangeDate"),
+                    "last_communication": info.get("lastCommunicationDate"),
+                    "max_power_kw": (channel.get("power") or 0) / 1000 or None,
+                    "connector_type": channel.get("connectorType"),
+                }
+            )
 
         return {k: v for k, v in attributes.items() if v is not None}

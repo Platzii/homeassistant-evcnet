@@ -2,20 +2,22 @@
 
 This custom integration allows you to monitor and control your EVC-net (Last Mile Solutions) charging station through Home Assistant.
 
+> **Version 2.0.0** switched from the old EVC-net web portal (`*.evc-net.com`) to the GraphQL API that is also used by the 50five app, because login to the old portal no longer works. You now log in with your 50five account (email + password); a base URL is no longer needed. See [Upgrading from 1.x](#upgrading-from-1x).
+
 ## Disclaimer
 
 **Important Notice**: This integration was developed with the assistance of AI tools, as I have little to no prior experience with Python or Home Assistant integration development. While the code has been tested and appears to function correctly, please use it at your own discretion and report any issues you encounter.
 
-**Testing Environment**: This integration has been primarily tested on the 50five (BELUX) endpoint (`50five-sbelux.evc-net.com`) in combination with a Shell Recharge/NewMotion-Enovates EV charger (Home Advanced 3.0). Compatibility with other EVC-net endpoints or charging station models may vary. Users have confirmed that the 50five Germany (`50five-sde.evc-net.com`), 50five UK (`50five-suk.evc-net.com`), 50five (`50five.evc-net.com`) and 50five NL (`50five-snl.evc-net.com`) endpoints work as well.
+**Testing Environment**: Version 2.0.0 has been tested with a 50five NL account and a Shell Recharge/NewMotion Home Advanced charger. Other 50five countries use the same API and are expected to work, but have not been confirmed yet.
 
 ## Features
 
-- **Sensors**: Monitor charging status, power consumption, energy usage, and charging log (summary, last log time, last log notification)
+- **Sensors**: Monitor charging status, power, energy usage, and recent charging sessions (summary, last session time and status)
 - **Switch**: Start and stop charging sessions
-- **Buttons**: Control charging station operations (soft/hard reset, unlock connector, block/unblock, refresh status)
+- **Buttons**: Control charging station operations (soft/hard reset, unlock connector, refresh status)
 - **Multi-channel**: Optional support for stations with multiple connectors (per-channel sensors and switches)
-- **Real-time updates**: Automatic polling every 30 seconds; use the Refresh Status button or action for an immediate update
-- **Action calls**: Start/stop charging, refresh status, reset, unlock connector, block/unblock (with optional RFID card for start)
+- **Updates**: Automatic polling every 30 seconds; use the Refresh Status button or action for an immediate update
+- **Action calls**: Start/stop charging, refresh status, reset, unlock connector (with optional charge card for start)
 
 ## Installation
 
@@ -47,85 +49,56 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
 1. Go to Settings → Devices & Services
 2. Click "+ Add Integration"
 3. Search for "EVC-net (Last Mile Solutions)"
-4. Enter your credentials:
-   - **Base URL**: Default is `https://50five-sbelux.evc-net.com`
-   - **Email**: Your EVC-net account email
-   - **Password**: Your EVC-net account password
-5. (Optional) Configure your RFID card ID:
-   - **RFID Card ID**: Your charging card ID (e.g., `ABC12DEF34`)
-   - **Customer ID**: Your customer ID (usually optional)
+4. Enter the credentials of your 50five account (the same as in the 50five app):
+   - **Email**
+   - **Password**
+5. (Optional) Enter a **charge card ID** to start sessions with (e.g. `NL-TNM-C12345-6`). Leave it blank to use the card linked to your charging station, or the first active card on your account.
 
-A list of known base URLs are:
-
-- 50five: `https://50five.evc-net.com`
-- 50five Germany: `https://50five-sde.evc-net.com`
-- 50five UK: `https://50five-suk.evc-net.com`
-- 50five NL: `https://50five-snl.evc-net.com`
-- 50five Belgium: `https://50five-sbelux.evc-net.com`
-
-### Finding Your Card ID
-
-You have two options to find your RFID card ID:
-
-**Option 1: From Browser**
-1. Log in to the EVC-net platform (e.g.: https://50five-sbelux.evc-net.com) using your browser
-2. Navigate to Cards
-3. Find your Card ID in the table
-4. Use this when configuring the integration
-
-**Option 2: Auto-detection**
-1. Leave the card ID field blank during setup
-2. Enable debug logging (see Troubleshooting section)
-3. Start a charging session manually (with your RFID card)
-4. Wait 30 seconds for the integration to update
-5. Check the logs - you'll see: `Auto-detected card_id: YOUR_CARD_ID`
-6. The card ID is now cached and you can control charging from HA
+You can find your card ID in the 50five app, or in the `card_id` attribute of the Charging switch after setup.
 
 ## Available Entities
 
 For each charging station, the integration creates:
 
 ### Sensors
-- **Status**: Current charging station status
-- **Status Code**: Raw status code from the charging station
-- **Total Energy**: Total energy consumed (kWh)
+- **Status**: Channel status (`Available`, `Charging`, `Reserved`, `Unavailable`, `Faulty`, ...)
+- **Status Code**: Detailed channel statuses (e.g. `Transaction`, `ChargingComplete`)
+- **Total Energy**: Total energy charged at this station (kWh), summed from all sessions plus the running session
 - **Software Version**: Charging station software version
-- **Current Power**: Active power draw in kilowatts
-- **Session Energy**: Energy consumed in current session (kWh)
-- **Session Time**: Duration of current charging session in hours
-- **Log Summary**: Number of log entries; attributes include a markdown table of recent sessions (for use in a Markdown card)
-- **Last Log Notification** / **Last Log Time**: Latest log entry summary
+- **Current Power**: Charging power in kW. The API does not report live power, so this is **estimated** from the increase of the session energy between meter updates (roughly every 15 minutes). Directly after a restart it shows the average power of the running session.
+- **Session Energy**: Energy charged in the current session (kWh)
+- **Session Time**: Duration of the current session in hours (charging + idle)
+- **Log Summary**: Number of recent sessions; attributes include a markdown table of recent sessions (for use in a Markdown card)
+- **Last Log Notification** / **Last Log Time**: Status and start time of the most recent session
 
 On stations with multiple connectors (when "Max channels" > 1 in options), sensors are created per channel (e.g. "Ch 1 Status", "Ch 2 Status").
 
 ### Switch
-- **Charging**: Turn on to start charging, off to stop
+- **Charging**: On while a session is active. Turn on to start charging, off to stop
 
 ### Buttons
-- **Refresh Status**: Manually trigger an immediate status update from the portal
+- **Refresh Status**: Fetch the latest status immediately
 - **Soft Reset**: Perform a soft reset on the charging station
 - **Hard Reset**: Perform a hard reset on the charging station
 - **Unlock Connector**: Unlock the connector on the charging station
-- **Block**: Block the charging station from use
-- **Unblock**: Unblock the charging station to allow use
 
-## Using Multiple RFID Cards
+## Using Multiple Charge Cards
 
-The integration supports using different RFID cards for different charging sessions. This is useful when you have multiple vehicles with different charging cards.
+The integration supports using different charge cards for different charging sessions. This is useful when you have multiple vehicles with different charging cards.
 
 ### Using the Action
 
-You can use the `evcnet.start_charging` action to specify which RFID card to use:
+You can use the `evcnet.start_charging` action to specify which charge card to use:
 
 ```yaml
 action: evcnet.start_charging
 target:
   entity_id: switch.your_charging_station_charging # or device_id: 516934b04b9345cb26086fdb88de6467
 data:
-  card_id: "ABC12DEF34"  # Your RFID card ID
+  card_id: "NL-TNM-C12345-6"  # Your charge card ID
 ```
 
-**Note**: If you don't specify a `card_id` in the action, the integration will use the default card configured in the integration settings.
+**Note**: If you don't specify a `card_id` in the action, the integration uses the card configured in the integration settings, or else the card linked to the charging station.
 
 ### Viewing charging log in a card
 
@@ -159,14 +132,6 @@ action: evcnet.unlock_connector
 ```
 
 ```yaml
-action: evcnet.block
-```
-
-```yaml
-action: evcnet.unblock
-```
-
-```yaml
 action: evcnet.refresh_status
 ```
 
@@ -174,35 +139,32 @@ action: evcnet.refresh_status
 
 After initial setup, you can modify configuration through the Home Assistant UI:
 
-### Quick Settings (Card ID, Customer ID, Max Channels)
+### Quick Settings (Card ID, Max Channels)
 
 1. Go to **Settings** → **Devices & Services**
 2. Find your **EVC-net** integration
 3. Click the **Configure** button (⚙️)
 4. Update your settings:
-   - **RFID Card ID**: Your charging card ID
-   - **Customer ID**: Your customer ID (optional)
+   - **Charge card ID**: Card used to start sessions (blank = card linked to the station)
    - **Max channels**: For stations with multiple connectors, set to 2 or more to create per-channel sensors and switches (e.g. "Ch 1 Charging", "Ch 2 Charging"). Leave at 1 for single-connector stations. Changing this option reloads the integration.
 
-### Change Connection Credentials (URL, Username, Password)
-
-To change your base URL, username, or password:
+### Change Credentials (Email, Password)
 
 1. Go to **Settings** → **Devices & Services**
 2. Find your **EVC-net** integration
 3. Click the **Configure** button (⚙️)
 4. Click **"Reconfigure"** at the bottom
-5. Update your credentials:
-   - **Base URL**: Your EVC-net endpoint
-   - **Email**: Your account email
-   - **Password**: Leave blank to keep current password
+5. Update your email and/or password (leave password blank to keep the current one)
 
-### Configuration Priority
+If your password is rejected later on (e.g. after changing it in the 50five app), Home Assistant shows a re-authentication prompt.
 
-The integration uses configuration in this order:
-1. **Options** (set via Configure button) - highest priority
-2. **Initial setup** (set during integration setup)
-3. **Auto-detection** (detected from API responses) - fallback
+## Upgrading from 1.x
+
+- Your existing configuration is migrated automatically: the base URL and customer ID are no longer used and are removed.
+- Login uses your 50five account. If your old EVC-net portal login differs from your 50five app login, use **Reconfigure** to enter the 50five credentials.
+- The **Block** / **Unblock** buttons and the `evcnet.block` / `evcnet.unblock` actions have been removed, because the new API does not offer them. Remove them from your automations.
+- Sensor values are now based on the new API: **Status** shows values like `Charging` / `Available`, **Status Code** shows the detailed status names instead of a hexadecimal code, and the log sensors show charging sessions instead of portal log events. **Last Log Time** is now a timestamp sensor.
+- If the charging station ID in the new API differs from the old portal, new entities are created and the old ones become unavailable; you can delete those.
 
 ## Troubleshooting
 
@@ -213,6 +175,16 @@ logger:
   default: info
   logs:
     custom_components.evcnet: debug
+```
+
+### Testing the API without Home Assistant
+
+`scripts/test_api.py` logs in and prints your stations, sessions and cards (read-only):
+
+```powershell
+pip install aiohttp
+$env:EVCNET_EMAIL = "you@example.com"; $env:EVCNET_PASSWORD = "..."
+python scripts/test_api.py
 ```
 
 ## Support

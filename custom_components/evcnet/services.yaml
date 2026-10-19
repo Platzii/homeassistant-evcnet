@@ -7,8 +7,8 @@ start_charging:
       integration: evcnet
   fields:
     card_id:
-      name: RFID Card ID
-      description: Optional RFID card ID to use for this charging session. If not provided, uses the default card configured in the integration.
+      name: Charge card ID
+      description: Optional charge card ID (e.g. NL-TNM-C12345-6) to use for this session. If not provided, uses the card configured in the integration or the card linked to the charging station.
       required: false
       selector:
         text:
@@ -23,7 +23,7 @@ stop_charging:
 
 refresh_status:
   name: Refresh status
-  description: Manually trigger an immediate status update from the portal
+  description: Immediately fetch the latest status from the 50five API
   target:
     entity:
       domain: switch
@@ -48,22 +48,6 @@ hard_reset:
 unlock_connector:
   name: Unlock connector
   description: Unlock the connector on the charging station
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
-
-block:
-  name: Block
-  description: Block the charging station from use
-  target:
-    entity:
-      domain: switch
-      integration: evcnet
-
-unblock:
-  name: Unblock
-  description: Unblock the charging station for use
   target:
     entity:
       domain: switch
