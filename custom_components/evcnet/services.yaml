@@ -68,3 +68,15 @@ unblock:
     entity:
       domain: switch
       integration: evcnet
+
+submit_mfa:
+  name: Submit verification code
+  description: Send the verification (MFA/OTP) code that EVC-net sent you by e-mail or text message. You can also enter it under Settings > Repairs.
+  fields:
+    code:
+      name: Code
+      description: The verification code
+      required: true
+      example: "123456"
+      selector:
+        text:

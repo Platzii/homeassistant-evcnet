@@ -1,0 +1,22 @@
+{
+  "issues": {
+    "mfa_required": {
+      "title": "EVC-net: verificatiecode nodig",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "EVC-net verificatiecode invoeren",
+            "description": "EVC-net heeft je een verificatiecode gestuurd (per e-mail of sms). Vul die hieronder in. De code is ongeveer 15 minuten geldig.",
+            "data": {
+              "code": "Verificatiecode"
+            }
+          }
+        },
+        "error": {
+          "invalid_code": "De code is niet geaccepteerd. Controleer de code, of wacht op een nieuwe code en vul die in.",
+          "empty_code": "Vul de code in."
+        }
+      }
+    }
+  }
+}
