@@ -204,6 +204,24 @@ The integration uses configuration in this order:
 2. **Initial setup** (set during integration setup)
 3. **Auto-detection** (detected from API responses) - fallback
 
+## Two-factor login (MFA)
+
+Some EVC-net portals (for example 50five) ask for a verification code after you log in with your e-mail and password. When that happens:
+
+1. Home Assistant shows a notification **EVC-net: verification code needed**.
+2. Go to **Settings → Repairs**, choose **EVC-net: verification code needed** and enter the code you received by e-mail or text message.
+3. The integration logs in and loads your charging stations.
+
+You can also send the code with the `evcnet.submit_mfa` action:
+
+```yaml
+action: evcnet.submit_mfa
+data:
+  code: "123456"
+```
+
+The code is valid for about 15 minutes. The login is kept in memory, so after a restart of Home Assistant EVC-net asks for a new code.
+
 ## Troubleshooting
 
 Enable debug logging by adding this to your `configuration.yaml`:

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **MFA / two-factor login**: accounts that EVC-net asks for a verification code (e.g. 50five) can now log in. When a code is needed, Home Assistant shows a notification and a repair (Settings → Repairs) with a form to enter the code. The new `evcnet.submit_mfa` action does the same from an automation or Developer tools.
+
+### Fixed
+- Login no longer treats a redirect to the Overview page as success when the account still has to pass MFA (this gave an empty charge spot list).
+- EVC-net redirects to `http://` after login and after the MFA check; redirects are now followed over `https://`, which kept the session alive.
+- The session ID that EVC-net hands out after login and after MFA is now picked up, instead of reusing the old one.
+- The API client is reused across setup retries and reloads, so a code entered for a pending login is not lost.
+- The integration uses its own HTTP session (own cookie jar), which is no longer closed by Home Assistant when a setup attempt fails.
+
 ## [1.0.1] - 2026-02-19
 
 ### Fixed
