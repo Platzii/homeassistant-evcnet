@@ -51,5 +51,25 @@
         }
       }
     }
+  },
+  "issues": {
+    "mfa_required": {
+      "title": "EVC-net: verification code needed",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Enter the EVC-net verification code",
+            "description": "EVC-net has sent you a verification code (by e-mail or text message). Enter it below. The code is valid for about 15 minutes.",
+            "data": {
+              "code": "Verification code"
+            }
+          }
+        },
+        "error": {
+          "invalid_code": "The code was not accepted. Check the code, or wait for a new code and enter that one.",
+          "empty_code": "Enter the code."
+        }
+      }
+    }
   }
 }
