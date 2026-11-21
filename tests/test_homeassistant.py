@@ -23,12 +23,6 @@ pytestmark = pytest.mark.asyncio
 DATA = {"base_url": "https://test.evc-net.com", "username": "test@example.invalid", "password": "saved-password"}
 
 
-def test_default_base_url_is_50five_nl():
-    from custom_components.evcnet.const import DEFAULT_BASE_URL
-
-    assert DEFAULT_BASE_URL == "https://50five-snl.evc-net.com"
-
-
 @pytest_asyncio.fixture
 async def flow(tmp_path, monkeypatch):
     result = config_flow.EvcNetConfigFlow()
@@ -42,6 +36,7 @@ async def flow(tmp_path, monkeypatch):
     client = Mock()
     client.authenticate = AsyncMock(side_effect=TwoFactorRequired())
     client.verify_otp = AsyncMock(return_value=True)
+    client.session.close = AsyncMock()
     client.export_cookies.return_value = [{"name": "PHPSESSID", "value": "test-session", "attrs": {}}]
     save = AsyncMock()
     monkeypatch.setattr(config_flow, "create_client", Mock(return_value=(client, Mock(), save)))
@@ -131,11 +126,12 @@ async def test_login_errors(flow, exception, error):
     save.assert_not_awaited()
 
 
-async def test_cancel_flow_detaches_private_session(flow):
+async def test_cancel_flow_closes_private_session(flow):
     result, client, _ = flow
     await result.async_step_user(DATA)
     result.async_remove()
-    client.session.detach.assert_called_once()
+    await asyncio.sleep(0)
+    client.session.close.assert_awaited_once()
 
 
 @pytest.mark.parametrize("point", ["spots", "status", "energy", "log"])

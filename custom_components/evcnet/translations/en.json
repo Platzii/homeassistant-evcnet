@@ -36,7 +36,7 @@
       },
       "reauth_confirm": {
         "title": "Authenticate EVC-net again",
-        "description": "Your session expired. Submit to request a new email code. Leave the password blank to reuse your saved password.",
+        "description": "Your session expired. Submit to log in again; if EVC-net asks for an email code, a new one is sent (ignore any earlier code). Leave the password blank to reuse your saved password.",
         "data": {
           "password": "Password (leave blank to keep current)"
         }
@@ -45,7 +45,7 @@
     "error": {
       "invalid_auth": "Invalid username or password",
       "cannot_connect": "Cannot connect to EVC-net",
-      "invalid_url": "Enter an HTTPS origin, without a path, query or credentials.",
+      "invalid_url": "Invalid URL format. Please enter a valid URL starting with http:// or https://, without a path",
       "unknown": "Unexpected error occurred",
       "invalid_otp": "Invalid or expired code. Try again or restart authentication.",
       "invalid_response": "Unexpected response from EVC-net. The EVC-net log entry contains the request step and HTTP status, without credentials.",

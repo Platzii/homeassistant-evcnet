@@ -29,7 +29,7 @@ CONF_CUSTOMER_ID = "customer_id"
 def validate_url(url):
     try:
         parsed = urlparse(url)
-        return (parsed.scheme == "https" and bool(parsed.hostname)
+        return (parsed.scheme in ("http", "https") and bool(parsed.hostname)
                 and not parsed.username and not parsed.password
                 and parsed.path in ("", "/") and not parsed.query and not parsed.fragment)
     except ValueError:
@@ -47,10 +47,14 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._entry = None
         self._mode = "user"
 
+    def _close_client(self):
+        if self._client:
+            self.hass.async_create_task(self._client.session.close())
+            self._client = None
+
     @callback
     def async_remove(self):
-        if self._client:
-            self._client.session.detach()
+        self._close_client()
         super().async_remove()
 
     @staticmethod
@@ -88,8 +92,7 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not self._entry:
                     await self.async_set_unique_id(f"{data[CONF_USERNAME]}_{data[CONF_BASE_URL]}")
                     self._abort_if_unique_id_configured()
-                if self._client:
-                    self._client.session.detach()
+                self._close_client()
                 self._client, _, self._save = create_client(self.hass, data)
                 try:
                     await self._client.authenticate()
@@ -144,7 +147,7 @@ class EvcNetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _finish_auth(self):
         # Neither the OTP nor the CSRF token is persisted.
         await self._save(self._client.export_cookies())
-        self._client.session.detach()
+        self._close_client()
         if self._entry:
             return self.async_update_reload_and_abort(
                 self._entry, data_updates=self._user_input,

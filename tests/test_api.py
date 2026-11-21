@@ -32,6 +32,8 @@ async def server():
             response = state["override"](request)
             if response is not None:
                 return response
+        if request.path == "/Login/Login" and request.method == "GET":
+            return web.Response(text='<form><input name="emailField"></form>')
         if request.path == "/Login/Login":
             state["authenticated"] = not state["two_factor"]
             response = web.Response(status=302, headers={"Location": "/2fa" if state["two_factor"] else "/Overview"})
@@ -92,7 +94,7 @@ async def test_otp_and_validation(server, caplog):
     caplog.set_level("DEBUG", logger="custom_components.evcnet.api")
     await login(client)
     assert client._is_authenticated
-    assert [c[0] for c in state["calls"]] == ["/Login/Login", "/2fa", "/2fa_check", "/Overview", "/api/ajax"]
+    assert [c[0] for c in state["calls"]] == ["/Login/Login", "/Login/Login", "/2fa", "/2fa_check", "/Overview", "/api/ajax"]
     assert "012345" not in caplog.text
     assert "test-password" not in caplog.text
     assert "csrf&token" not in caplog.text
@@ -148,7 +150,7 @@ async def test_cookie_rotation_persistence_and_restart(server):
     restarted.restore_cookies(json.loads(json.dumps(saved)))
     await restarted.get_charge_spots()
     assert state["calls"][-1][2] == {"PHPSESSID": "rotated", "extra_session": "extra"}
-    assert len([c for c in state["calls"] if c[0] == "/Login/Login"]) == 1
+    assert len([c for c in state["calls"] if c[0] == "/Login/Login" and c[1]]) == 1
 
 
 async def test_expired_persisted_cookie_not_resurrected(server):
@@ -162,18 +164,54 @@ async def test_expired_persisted_cookie_not_resurrected(server):
     (302, "/2fa", ""), (302, "/Login", ""), (401, None, ""), (403, None, ""),
     (200, None, '<input name="passwordField">'),
 ])
-async def test_auth_expiry_does_not_replay_actions(server, status, location, body):
+async def test_auth_expiry_with_2fa_requests_reauth_once(server, status, location, body):
     client, state, _ = server
     await login(client)
-    client.save_cookies = AsyncMock()
     client.auth_expired = Mock()
     state["override"] = lambda req: web.Response(status=status, headers={"Location": location} if location else {}, text=body) if req.path == "/api/ajax" else None
+    with pytest.raises(TwoFactorRequired):
+        await client.stop_charging("42", "1")
+    # One silent password login was tried; the action was not replayed.
+    assert [c[0] for c in state["calls"]].count("/api/ajax") == 2
+    client.auth_expired.assert_called_once()
     before = len(state["calls"])
     with pytest.raises(AuthenticationError):
-        await client.stop_charging("42", "1")
-    assert len(state["calls"]) == before + 1
+        await client.get_charge_spots()
+    assert len(state["calls"]) == before  # no further logins, no further email codes
     client.auth_expired.assert_called_once()
-    client.save_cookies.assert_awaited_with([])
+
+
+async def test_auth_expiry_without_2fa_relogs_silently(server):
+    client, state, _ = server
+    state["two_factor"] = False
+    assert await client.authenticate()
+    state["authenticated"] = False  # server-side session expired
+    assert await client.get_charge_spots() == [[{"IDX": "42"}]]
+    assert [c[0] for c in state["calls"]].count("/Login/Login") == 4  # GET+POST twice
+
+
+async def test_trusted_device_cookie_survives_relogin(server):
+    client, state, _ = server
+    state["override"] = lambda req: (web.Response(text=(
+        '<input value="csrf&amp;token" name="_token" type="hidden">'
+        '<input type="checkbox" name="trust_device" value="1">')) if req.path == "/2fa" else None)
+    with pytest.raises(TwoFactorRequired):
+        await client.authenticate()
+    await client.verify_otp("012345")
+    assert state["calls"][-3][1]["trust_device"] == "1"
+    client._jar.update_cookies({"trusted": "yes"}, __import__("yarl").URL(client.base_url))
+    state["override"] = None
+    state["two_factor"] = False
+    state["authenticated"] = False
+    await client.get_charge_spots()
+    assert state["calls"][-1][2]["trusted"] == "yes"
+
+
+async def test_empty_action_ack_is_accepted(server):
+    client, state, _ = server
+    await login(client)
+    state["ajax"] = []
+    assert await client.stop_charging("42", "1") == []
 
 
 async def test_empty_data_with_2fa_dashboard_is_not_accepted(server):
@@ -197,7 +235,7 @@ async def test_foreign_redirect_never_followed(server):
     state["override"] = lambda req: web.Response(status=302, headers={"Location": "https://other.invalid/2fa"})
     with pytest.raises(ApiError, match="cross-origin"):
         await client.authenticate()
-    assert len(state["calls"]) == 1
+    assert len(state["calls"]) == 2  # login page GET + POST; the redirect is never followed
 
 
 async def test_transient_error_preserves_auth(server):
@@ -305,7 +343,7 @@ async def test_server_error_has_safe_diagnostics(server, caplog):
     with pytest.raises(ApiError) as error:
         await client.authenticate()
     assert error.value.code == "server_error"
-    assert client.last_response == {"method": "POST", "path": "/Login/Login", "status": 500, "redirect": "different_origin", "redirect_origin": "https://other.invalid"}
+    assert client.last_response == {"method": "GET", "path": "/Login/Login", "status": 500, "redirect": "different_origin", "redirect_origin": "https://other.invalid", "set_cookie_names": ["PHPSESSID"]}
     for secret in ("private-response-body", "private-cookie", "private-query", "test-password", "test@example.invalid"):
         assert secret not in caplog.text
 

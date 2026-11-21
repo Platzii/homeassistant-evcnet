@@ -42,12 +42,17 @@ class _TokenParser(HTMLParser):
     def __init__(self):
         super().__init__()
         self.token = None
+        self.trust = {}
 
     def handle_starttag(self, tag, attrs):
         fields = dict(attrs)
-        if (tag == "input" and fields.get("name") == "_token"
-                and fields.get("type", "").lower() == "hidden"):
+        name = fields.get("name") or ""
+        kind = fields.get("type", "").lower()
+        if tag == "input" and name == "_token" and kind == "hidden":
             self.token = fields.get("value")
+        # ponytail: field name unknown/portal-specific; tick any "trust"/"remember" checkbox.
+        elif tag == "input" and kind == "checkbox" and re.search(r"trust|remember", name, re.I):
+            self.trust[name] = fields.get("value") or "on"
 
 
 class EvcNetApiClient:
@@ -61,6 +66,8 @@ class EvcNetApiClient:
         self._jar = aiohttp.CookieJar()
         self._is_authenticated = False
         self._token = None
+        self._trust = {}
+        self._needs_reauth = False
         self._lock = asyncio.Lock()
         self.save_cookies = None
         self.auth_expired = None
@@ -102,12 +109,10 @@ class EvcNetApiClient:
             self._last_saved = cookies
 
     async def _expired(self):
+        # Keep the jar: it may hold a trusted-device cookie that lets the next
+        # password login skip the email code.
         self._is_authenticated = False
-        self._jar.clear()
-        await self._persist()
-        if self.auth_expired:
-            self.auth_expired()
-        _LOGGER.info("EVC-net session expired; authentication is required")
+        _LOGGER.info("EVC-net session expired")
         raise AuthenticationError("EVC-net session expired")
 
     async def _request(self, method, path, **kwargs):
@@ -149,8 +154,8 @@ class EvcNetApiClient:
             try:
                 target_url = URL(self.base_url + "/").join(URL(location))
                 redirect_origin = f"{target_url.scheme}://{target_url.host}"
-                if target_url.port:
-                    redirect_origin += f":{target_url.port}"
+                if target_url.explicit_port:
+                    redirect_origin += f":{target_url.explicit_port}"
                 if target_url.origin() != URL(self.base_url).origin():
                     redirect_kind = "different_origin"
                 elif target_url.path.rstrip("/") == "/2fa":
@@ -197,42 +202,46 @@ class EvcNetApiClient:
         if not parser.token:
             raise ApiError("Verification form has no CSRF token", code="missing_otp_token")
         self._token = parser.token
+        self._trust = parser.trust
 
     async def authenticate(self):
         async with self._lock:
-            self._is_authenticated = False
-            self._jar.clear()
-            self._token = None
-            login_data = aiohttp.FormData()
-            login_data.add_field("emailField", self.username, content_type="text/plain")
-            login_data.add_field("passwordField", self.password, content_type="text/plain")
-            login_data.add_field("Login", "Login", content_type="text/plain")
-            login_page_status, _, login_page = await self._request("GET", LOGIN_ENDPOINT)
-            if login_page_status == 200:
-                parser = _TokenParser()
-                parser.feed(login_page)
-                if parser.token:
-                    login_data.add_field("_token", parser.token, content_type="text/plain")
-            status, location, _ = await self._request(
-                "POST", LOGIN_ENDPOINT, data=login_data,
-                headers={"Origin": self.base_url, "Referer": f"{self.base_url}/Login/Login"},
-            )
-            if status not in (302, 303):
-                raise AuthenticationError("Login rejected")
-            path = self._redirect(location)
-            if path == "/2fa":
+            return await self._login()
+
+    async def _login(self):
+        self._is_authenticated = False
+        self._jar.clear(lambda c: c.key == "PHPSESSID")
+        self._token = None
+        login_data = aiohttp.FormData()
+        login_data.add_field("emailField", self.username, content_type="text/plain")
+        login_data.add_field("passwordField", self.password, content_type="text/plain")
+        login_data.add_field("Login", "Login", content_type="text/plain")
+        login_page_status, _, login_page = await self._request("GET", LOGIN_ENDPOINT)
+        if login_page_status == 200:
+            parser = _TokenParser()
+            parser.feed(login_page)
+            if parser.token:
+                login_data.add_field("_token", parser.token, content_type="text/plain")
+        status, location, _ = await self._request(
+            "POST", LOGIN_ENDPOINT, data=login_data,
+            headers={"Origin": self.base_url, "Referer": f"{self.base_url}/Login/Login"},
+        )
+        if status not in (302, 303):
+            raise AuthenticationError("Login rejected")
+        path = self._redirect(location)
+        if path == "/2fa":
+            await self._get_token()
+            raise TwoFactorRequired("Email verification required")
+        if path not in ("/", "/Overview"):
+            raise AuthenticationError("Login rejected")
+        status, location, _ = await self._request("GET", "/Overview")
+        if status in (301, 302, 303, 307, 308):
+            next_path = self._redirect(location)
+            if next_path == "/2fa":
                 await self._get_token()
                 raise TwoFactorRequired("Email verification required")
-            if path not in ("/", "/Overview"):
-                raise AuthenticationError("Login rejected")
-            status, location, _ = await self._request("GET", "/Overview")
-            if status in (301, 302, 303, 307, 308):
-                next_path = self._redirect(location)
-                if next_path == "/2fa":
-                    await self._get_token()
-                    raise TwoFactorRequired("Email verification required")
-            await self._validate()
-            return True
+        await self._validate()
+        return True
 
     async def verify_otp(self, code):
         if not re.fullmatch(r"[0-9]{6}", code):
@@ -241,7 +250,9 @@ class EvcNetApiClient:
             if not self._token:
                 raise AuthenticationError("Restart login to request a verification code")
             form = aiohttp.FormData()
-            for name, value in (("_token", self._token), ("_auth_code", code), ("VerifyOtp", "Verify")):
+            fields = (("_token", self._token), ("_auth_code", code), ("VerifyOtp", "Verify"),
+                      *self._trust.items())
+            for name, value in fields:
                 form.add_field(name, value, content_type="text/plain")
             status, location, _ = await self._request(
                 "POST", "/2fa_check", data=form,
@@ -286,6 +297,7 @@ class EvcNetApiClient:
             raise AuthenticationError("Session cookie missing")
         await self._ajax(self._spots_payload())
         self._is_authenticated = True
+        self._needs_reauth = False
         await self._persist()
         _LOGGER.info("EVC-net authentication validated")
 
@@ -313,6 +325,9 @@ class EvcNetApiClient:
                 await self._expired()
             await self._check_page()
             raise ApiError("API returned invalid JSON") from err
+        # Actions acknowledge with an empty batch on some portals (NL).
+        if result == [] and payload.get("0", {}).get("method") == "action":
+            return result
         # The AJAX batch protocol returns a list. Never accept an error object as data.
         if not isinstance(result, list) or not result:
             await self._check_page()
@@ -327,10 +342,25 @@ class EvcNetApiClient:
                 raise ApiError("Invalid charge spots response")
         return result
 
-    async def _make_ajax_request(self, requests_payload, _retry_count=0):
+    async def _make_ajax_request(self, requests_payload):
         async with self._lock:
-            if not self._is_authenticated:
-                await self._expired()
+            if self._needs_reauth:
+                raise AuthenticationError("EVC-net authentication required")
+            if self._is_authenticated:
+                try:
+                    return await self._ajax(requests_payload)
+                except AuthenticationError:
+                    pass
+            # ponytail: one silent password login per expiry. Works without 2FA or with a
+            # trusted-device cookie; otherwise it costs one email code and we hand over to
+            # HA's reauth flow. _needs_reauth stops further logins (= more emails) until then.
+            try:
+                await self._login()
+            except AuthenticationError:
+                self._needs_reauth = True
+                if self.auth_expired:
+                    self.auth_expired()
+                raise
             return await self._ajax(requests_payload)
 
     async def get_charge_spots(self) -> dict[str, Any]:

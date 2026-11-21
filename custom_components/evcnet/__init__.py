@@ -22,7 +22,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import EvcNetCoordinator
-from .session import create_client
+from .session import async_remove_session, create_client
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -251,6 +251,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     client, store, save = create_client(hass, entry.data)
+    entry.async_on_unload(client.session.close)
     client.save_cookies = save
     client.auth_expired = lambda: entry.async_start_reauth(hass)
     try:
@@ -292,3 +293,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the stored session when the entry is removed."""
+    await async_remove_session(hass, entry.data)
