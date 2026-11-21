@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.1.0] - Unreleased
+## [1.1.0-beta.1] - 2026-11-21
 
 🙏 A big thank you to @mcostantini70 for the email two-factor authentication implementation (#39), to @bartj12 for testing and fixing the NL login flow, and to @stista-HA for the trusted-device idea (#46).
 

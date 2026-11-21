@@ -33,7 +33,7 @@ Home Assistant custom integration (HACS) `evcnet` for EV chargers managed via th
 
 ## Workflow
 
-- Branches: features/fixes → PR into `develop`; release = merge `develop` → `main`, bump `manifest.json` version + `CHANGELOG.md`, push tag `vX.Y.Z` → `release.yaml` zips the component into `homeassistant-evcnet.zip`. Tags with a `b`/`-` (e.g. `v1.1.0b1`) become GitHub prereleases → HACS shows them only to users with "Show beta versions" enabled.
+- Branches: features/fixes → PR into `develop`; release = merge `develop` → `main`, bump `manifest.json` version + `CHANGELOG.md`, push tag `vX.Y.Z` → `release.yaml` zips the component into `homeassistant-evcnet.zip`. SemVer tags; pre-release tags (e.g. `v1.1.0-beta.1`, manifest `1.1.0-beta.1`) become GitHub prereleases → HACS shows them only to users with "Show beta versions" enabled.
 - CI: `validate.yaml` (HACS + hassfest), `test.yml` (pytest).
 - Run tests: `python -m pip install -r requirements-test.txt && python -m pytest`.
 - Never log credentials, OTP codes or full session ids.
