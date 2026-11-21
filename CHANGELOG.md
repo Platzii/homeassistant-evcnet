@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - Unreleased
+
+🙏 A big thank you to @mcostantini70 for the email two-factor authentication implementation (#39), to @bartj12 for testing and fixing the NL login flow, and to @stista-HA for the trusted-device idea (#46).
+
+### Added
+- **Email two-factor authentication (OTP)**: the setup, reconfigure and new re-authentication flows ask for the six-digit code sent by EVC-net (#35, #42, #45, #47).
+- **Persistent session**: the login session is stored per account in Home Assistant storage and survives restarts; it is deleted when the integration entry is removed.
+- When the session expires, the integration first tries a silent password login (works on portals without 2FA or when the device is trusted) and only asks to re-authenticate when a new email code is required.
+- The "trust this device" option on the verification page is ticked automatically when present.
+
+### Fixed
+- Login failures were silently reported as "No charging spots found"; they now trigger the re-authentication flow.
+- Empty responses after a lost session (e.g. after an internet outage) are no longer accepted as valid data (#30).
+- Action calls (start/stop charging, resets, …) no longer fail when the portal acknowledges them with an empty response.
+- Session time sensor failed for sessions longer than a day (e.g. `1d03:09`) (#29).
+- Total energy sensor now updates within 5 minutes instead of up to an hour (#24).
+- Adding an already configured account now shows "already configured" instead of an unknown error.
+
+### Changed
+- Each config entry uses its own HTTP session and cookie jar instead of Home Assistant's shared session.
+- Existing entries ask to re-authenticate once after upgrading.
+
 ## [1.0.1] - 2026-02-19
 
 ### Fixed
