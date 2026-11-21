@@ -386,7 +386,7 @@ class EvcNetApiClient:
                 "params":{
                     "mode":"rechargeSpot",
                     "rechargeSpotIds": [recharge_spot_id],
-                    "maxCache":3600
+                    "maxCache":300
                 }
             }
         }
