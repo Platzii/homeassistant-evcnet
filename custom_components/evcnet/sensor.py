@@ -2,6 +2,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
+import re
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -201,24 +202,16 @@ def parse_locale_number(value: Any, default: float = 0.0) -> float:
 
 
 def convert_time_to_decimal_hours(time_str: str) -> float:
-    """Convert HH:MM time format to decimal hours (e.g., 2:30 -> 2.5)."""
+    """Convert [Dd]HH:MM to decimal hours (e.g. 2:30 -> 2.5, 1d03:09 -> 27.15)."""
     if not time_str or not isinstance(time_str, str):
         return 0.0
 
-    try:
-        # Split by colon and convert to integers
-        parts = time_str.split(':')
-        if len(parts) == 2:
-            hours = int(parts[0])
-            minutes = int(parts[1])
-            # Convert to decimal hours: hours + (minutes / 60)
-            return hours + (minutes / 60.0)
-        else:
-            _LOGGER.warning("Invalid time format: %s", time_str)
-            return 0.0
-    except (ValueError, TypeError) as err:
-        _LOGGER.warning("Error converting time '%s' to decimal hours: %s", time_str, err)
+    match = re.fullmatch(r"\s*(?:(\d+)d)?(\d+):(\d+)\s*", time_str)
+    if not match:
+        _LOGGER.warning("Invalid time format: %s", time_str)
         return 0.0
+    days, hours, minutes = (int(g or 0) for g in match.groups())
+    return days * 24 + hours + minutes / 60.0
 
 
 def convert_energy_to_kwh(value: float, unit: str) -> float:

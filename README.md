@@ -55,6 +55,16 @@ This custom integration allows you to monitor and control your EVC-net (Last Mil
    - **RFID Card ID**: Your charging card ID (e.g., `ABC12DEF34`)
    - **Customer ID**: Your customer ID (usually optional)
 
+### Two-factor authentication (email code)
+
+Most 50five portals require an email verification code when logging in. When setting up the integration (or when Home Assistant asks you to re-authenticate), the integration logs in and EVC-net sends a six-digit code to your email address; enter it in the next step.
+
+The session is stored (in Home Assistant's `.storage` folder, not in the config entry) and survives restarts. When it eventually expires, the integration first tries to log in again silently; if EVC-net asks for a new code, Home Assistant shows a **Re-authenticate** notification under Settings → Devices & Services. If you received an earlier code in the meantime, ignore it and use the newest one.
+
+After upgrading from 1.0.x, every existing entry asks to re-authenticate once (also on portals without two-factor authentication).
+
+> **Note**: 50five's terms state that login details may not be shared with third parties. This integration only runs locally on your Home Assistant instance, but use it at your own discretion.
+
 A list of known base URLs are:
 
 - 50five: `https://50five.evc-net.com`

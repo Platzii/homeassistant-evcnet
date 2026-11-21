@@ -23,4 +23,6 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v2.4.1
       with:
+        # Tags like v1.1.0b1 / v1.1.0-beta.1 -> prerelease (HACS: only for users with "Show beta versions")
+        prerelease: ${{ contains(github.ref_name, 'b') || contains(github.ref_name, '-') }}
         files: ${{ github.workspace }}/custom_components/evcnet/homeassistant-evcnet.zip
